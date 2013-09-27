@@ -26,6 +26,7 @@
 struct nc_state {
     int initialized;
     int request_socket;
+    int update_socket;
     int worker_socket;
     struct nn_thread worker;
 };

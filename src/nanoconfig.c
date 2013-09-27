@@ -5,34 +5,10 @@
 
 static struct nc_state self;
 
-enum nc_command_tag {
-    NC_CONFIGURE = 1,
-    NC_CLOSE = 2,
-    NC_SHUTDOWN = 99
-};
-
-struct nc_command_close {
-    int tag;
-    int socket;
-};
-
-struct nc_command_shutdown {
-    int tag;
-};
-
-struct nc_command_configure {
-    int tag;
-    int socket;
-    char name[];
-};
-
-
-static void nc_start() {
-    char addr;
+static void nc_setup_request_socket ()
+{
+    char *addr;
     int rc;
-
-    if (self.initialized)
-        return;
 
     addr = getenv ("NN_CONFIG_SERVICE");
     if (!addr) {
@@ -40,7 +16,7 @@ static void nc_start() {
         abort();
     }
 
-    self.request_socket = nn_socket (AF_SP, NN_REQ);
+    self.request_socket = nn_socket (AF_SP_RAW, NN_REQ);
     if (self.request_socket < 0) {
         fprintf (stderr, "nanoconfig: Can't create nanomsg socket: %s",
             nn_strerror(errno));
@@ -54,9 +30,45 @@ static void nc_start() {
             nn_strerror(errno));
         abort();
     }
+}
+
+static void nc_setup_updates_socket ()
+{
+    char *addr;
+    int rc;
+
+    addr = getenv ("NN_CONFIG_UPDATES");
+    if (addr) {
+
+        self.updates_socket = nn_socket (AF_SP, NN_SUB);
+        if (self.updates_socket < 0) {
+            fprintf (stderr, "nanoconfig: Can't create nanomsg socket: %s",
+                nn_strerror(errno));
+            abort();
+        }
+
+        rc = nn_connect (self.updates_socket, addr);
+        if (rc < 0) {
+            fprintf (stderr,
+                "nanoconfig: Can't connect to configuration service: %s",
+                nn_strerror(errno));
+            abort();
+        }
+
+
+    } else {
+        self.updates_socket = -1;
+    }
+
+}
+
+
+static void nc_setup_worker_socket ()
+{
+    int rc;
 
     self.worker_socket = nn_socket (AF_SP, PUSH);
-    if (self.request_socket < 0) {
+    if (self.worker_socket < 0) {
         fprintf (stderr, "nanoconfig: Can't create nanomsg socket: %s",
             nn_strerror(errno));
         abort();
@@ -65,14 +77,41 @@ static void nc_start() {
     rc = nn_connect (self.worker_socket, "inproc://nanoconfig-worker");
     if (rc < 0) {
         fprintf (stderr,
-            "nanoconfig: Can't connect inproc sokcet: %s",
+            "nanoconfig: Can't connect inproc socket: %s",
             nn_strerror(errno));
         abort();
     }
+}
+
+
+static void nc_start() {
+    char addr;
+    int rc;
+
+    if (self.initialized)
+        return;
+
+    nc_setup_request_socket();
+    nc_setup_updates_socket();
+    nc_setup_worker_socket();
+
 
     nc_worker_start(&self);
 
     self.initialized = 1;
+}
+
+int nc_validate_url (char *url) {
+    if (strlen (url) > NC_URL_MAX)
+        return 0;
+    if (strncmp (url, "nanoconfig://", 13))
+        return 0;
+    /*  Barely checking that characters are printable and not space.
+        May implement more comprehensive URL checks here */
+    for (;*url; ++url)
+        if (!isprint (*url) || isblank (*url))
+            return 0;
+    return 1;
 }
 
 int nc_configure (int sock, char *url) {
@@ -80,6 +119,11 @@ int nc_configure (int sock, char *url) {
     struct nc_command_configure *cmd;
     int cmdlen;
     int err;
+
+    if (!nc_validate_url (url)) {
+        errno = EINVAL;
+        return -1;
+    }
 
     nc_start();
 
@@ -90,12 +134,8 @@ int nc_configure (int sock, char *url) {
 
     cmd->tag = NC_CONFIGURE;
     cmd->socket = sock;
-    strcpy (cmd->name, url);
+    strcpy (cmd->url, url);
 
-    if (!nc_validate_url (url)) {
-        errno = EINVAL;
-        return -1;
-    }
 
     rc = nn_send (self.worker_socket, &cmd, sizeof(cmd), 0);
     if (rc < 0) {

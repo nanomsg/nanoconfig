@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Insollo Entertainment, LLC.  All rights reserved.
+    Copyright (c) 2012 250bpm s.r.o.  All rights reserved.
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"),
@@ -20,31 +20,32 @@
     IN THE SOFTWARE.
 */
 
-#ifndef NC_WORKER_H_INCLUDED
-#define NC_WORKER_H_INCLUDED
+#ifndef NN_CLOCK_INCLUDED
+#define NN_CLOCK_INCLUDED
 
-enum nc_command_tag {
-    NC_CONFIGURE = 1,
-    NC_CLOSE = 2,
-    NC_SHUTDOWN = 99
+#include "int.h"
+
+/*  Optimised retrieval of the current time. The clock object is not
+    thread-safe. */
+
+struct nn_clock
+{
+    uint64_t last_tsc;
+    uint64_t last_time;
 };
 
-struct nc_command_close {
-    int tag;
-    int socket;
-};
+/*  Initialise the clock object. */
+void nn_clock_init (struct nn_clock *self);
 
-struct nc_command_shutdown {
-    int tag;
-};
+/*  Terminate the clock object. */
+void nn_clock_term (struct nn_clock *self);
 
-struct nc_command_configure {
-    int tag;
-    int socket;
-    char url[];
-};
+/*  Returns current time in milliseconds. */
+uint64_t nn_clock_now (struct nn_clock *self);
 
-void nc_worker_start(struct nc_state *state);
-void nc_worker_stop(struct nc_state *state);
+/*  Returns an unique timestamp. If the system doesn't support producing
+    timestamps the return value is zero. */
+uint64_t nn_clock_timestamp ();
 
 #endif
+

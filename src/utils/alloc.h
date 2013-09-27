@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Insollo Entertainment, LLC.  All rights reserved.
+    Copyright (c) 2012 250bpm s.r.o.  All rights reserved.
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"),
@@ -20,31 +20,25 @@
     IN THE SOFTWARE.
 */
 
-#ifndef NC_WORKER_H_INCLUDED
-#define NC_WORKER_H_INCLUDED
+#ifndef NN_ALLOC_INCLUDED
+#define NN_ALLOC_INCLUDED
 
-enum nc_command_tag {
-    NC_CONFIGURE = 1,
-    NC_CLOSE = 2,
-    NC_SHUTDOWN = 99
-};
+#include <stddef.h>
 
-struct nc_command_close {
-    int tag;
-    int socket;
-};
+/*  These functions allows for interception of memory allocation-related
+    functionality. */
 
-struct nc_command_shutdown {
-    int tag;
-};
+void nn_alloc_init (void);
+void nn_alloc_term (void);
+void *nn_realloc (void *ptr, size_t size);
+void nn_free (void *ptr);
 
-struct nc_command_configure {
-    int tag;
-    int socket;
-    char url[];
-};
-
-void nc_worker_start(struct nc_state *state);
-void nc_worker_stop(struct nc_state *state);
+#if defined NN_ALLOC_MONITOR
+#define nn_alloc(size, name) nn_alloc_ (size, name)
+void *nn_alloc_ (size_t size, const char *name);
+#else
+#define nn_alloc(size, name) nn_alloc_(size)
+void *nn_alloc_ (size_t size);
+#endif
 
 #endif
