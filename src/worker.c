@@ -338,6 +338,35 @@ static void nc_process_commands (struct nc_worker *self)
 
 static void nc_parse_and_apply (struct nc_worker *worker,
     struct nc_socket *self, char *buf, int buflen) {
+    /*  Reply structure (JSON-like syntax)
+     *  Error:
+     *    [0,  # Error marker
+     *      1234,  # Error code
+     *      "Error: no such node"]  # Error message
+     *  Success:
+     *    [1,  # Success marker
+     *      {  # Socket-level options (NN_SOL_SOCKET , NN_pattern)
+     *         # Any constant found by nn_symbol may be specified
+     *         # Type is derived from msgpack type
+     *         # Level is derived from the option name
+     *         # (e.g. NN_SUB_SUBSCRIBE has level NN_SUB)
+     *          'NN_SOCKET_NAME': "worker",
+     *          'NN_LINGER': 1000,
+     *         # Multiple options sets may be specified using:
+     *          'NN_SUB_SUBSCRIBE': ['abc', 'def'],
+     *         # Probably useful only for subscriptions
+     *      },
+     *      [
+     *          ["tcp://127.0.0.1:1234", {
+     *              'NN_TCP_NODELAY': 1,
+     *              'NN_SNDPRIO': 10,
+     *              #  Any transport- or endpoint-specific option
+     *          }],
+     *      ],
+     *      ["org.example.worker"],  # Subscriptions for updates (optional)
+     *    ]
+     */
+
     assert (0);
 }
 
