@@ -57,7 +57,7 @@ struct nc_topic {
     } subscr_list;
 
     int topic_len;
-    char topic[];
+    char topic [];
 };
 
 
@@ -71,6 +71,7 @@ struct nc_subscription {
         struct nc_subscription *next;
     } topic_list;
 
+    int visited;
     struct nc_topic *topic;
     struct nc_socket *socket;
 };
@@ -91,9 +92,13 @@ struct nc_socket {
         struct nc_subscription **tail;
     } subscr_list;
 
+    /*  A protocol name to use for socket option matching and in request  */
+    int protocol_len;
+    char *protocol;
+    int protoid;
     /*  A buffer for name request  */
     int request_len;
-    char request[];
+    char request [];
 };
 
 struct nc_worker {
@@ -107,7 +112,7 @@ struct nc_worker {
     uint32_t next_request_id;
 
     /*  TODO(tailhook) add ifdefs for Windows */
-    struct pollfd fds[NC_POLL_NUM];
+    struct pollfd fds [NC_POLL_NUM];
 
     struct nc_socket_list {
         struct nc_socket *head;
@@ -273,6 +278,9 @@ static void nc_process_configure (struct nc_worker *self,
         *target++ = ' ';
         memcpy (target, nnconst, constlen);
         sock->request_len = reqlen;
+        sock->protocol = nconst;
+        sock->protocol_len = constlen;
+        sock->protoid = proto;
         sock->subscr_list.head = NULL;
         sock->subscr_list.tail = &sock->subscr_list.head;
 
@@ -336,7 +344,49 @@ static void nc_process_commands (struct nc_worker *self)
     }
 }
 
-static void nc_parse_and_apply (struct nc_worker *worker,
+static int nc_parse_and_set_option (int sock, int optlev, int optid,
+    char **buf, int *buflen)
+{
+    int intopt;
+    char *stropt;
+    int stroptlen;
+    int optarrlen;
+    char *symname;
+    int symval;
+
+    if (nc_mp_parse_int (buf, buflen, &intopt)) {
+        rc = nn_setsockopt (sock, optlev, optid, &intopt, sizeof(intopt));
+        if (rc < 0)
+            nc_report_errno (worker, "Failed to set option");
+    } else if (nc_mp_parse_string (&buf, &buflen,
+        &stropt, &stroptlen)) {
+        rc = nn_setsockopt (self->socket, optlev, optid,
+            stropt, stroptlen);
+        if (rc < 0)
+            nc_report_errno (worker, "Failed to set option");
+    } else if (nc_mp_parse_array (&buf, &buflen, &optarrlen)) {
+        for (int j = 0; j < optarrlen; ++j) {
+            if (nc_mp_parse_int (&buf, &buflen, &intopt)) {
+                rc = nn_setsockopt (self->socket, optlev, optid,
+                    &intopt, sizeof(intopt));
+                if (rc < 0)
+                    nc_report_errno (worker, "Failed to set option");
+            } else if (nc_mp_parse_string (&buf, &buflen,
+                                           &stropt, &stroptlen)) {
+                rc = nn_setsockopt (self->socket, optlev, optid,
+                    stropt, stroptlen);
+                if (rc < 0)
+                    nc_report_errno (worker, "Failed to set option");
+            }
+        }
+    } else {
+        nc_report_error (worker, "Failed to parse option", -1);
+        return 0;
+    }
+    return 1;
+}
+
+static int nc_parse_and_apply (struct nc_worker *worker,
     struct nc_socket *self, char *buf, int buflen) {
     /*  Reply structure (JSON-like syntax)
      *  Error:
@@ -357,7 +407,8 @@ static void nc_parse_and_apply (struct nc_worker *worker,
      *         # Probably useful only for subscriptions
      *      },
      *      [
-     *          ["tcp://127.0.0.1:1234", {
+     *          # Zero for bind, and one for connect
+     *          [0, "tcp://127.0.0.1:1234", {
      *              'NN_TCP_NODELAY': 1,
      *              'NN_SNDPRIO': 10,
      *              #  Any transport- or endpoint-specific option
@@ -367,7 +418,218 @@ static void nc_parse_and_apply (struct nc_worker *worker,
      *    ]
      */
 
-    assert (0);
+    int ralen;
+    int retcode;
+    int errcode;
+    char *optname;
+    int optnamelen;
+    int i;
+    int j;
+    char *symname;
+    int symval;
+    int optid;
+    int optlev;
+    int addressnum;
+    int tuplelen;
+    int kind;
+    char *addr;
+    int addrlen;
+    char *colonchar;
+    int translen;
+    int transid;
+    char *transpref;
+    char *addrbuf;
+    int topicnum;
+    char *topic;
+    int topiclen;
+    struct nc_subscription *sub;
+
+    if (!nc_mp_parse_array (&buf, &buflen, &ralen))
+        return 0;
+    if (!nc_mp_parse_int (&buf, &buflen, &retcode))
+        return 0;
+    if (retcode == 0) {
+        /*  TODO(tailhook) report error somehow  */
+        if (ralen < 3) {
+            nc_report_error (worker, "Wrong length of error return array", -1);
+        } else if (!nc_mp_parse_int (&buf, &buflen, &errcode)) {
+            nc_report_error (worker, "No error code in error message", -1);
+        } else if (!nc_mp_parse_string (&buf, &buflen, &errstr, &errstrlen)) {
+            nc_report_error (worker, errstr, errstrlen);
+        }
+        return 0;
+    }
+    if (retcode != 1)
+        return 0;
+    if (ralen < 3) {
+        nc_report_error (worker, "Success result tuple is too short", -1);
+        return 0;
+    }
+    if (!nc_mp_parse_mapping (&buf, &buflen, &optpairs)) {
+        nc_report_error (worker, "Socket options is not a mapping", -1);
+        return 0;
+    }
+    for (i = 0; i < optpairs; ++i) {
+        if (!nc_mp_parse_string (&buf, &buflen, &optname, &optname_len)) {
+            nc_report_error (worker, "Socket option key is not a string", -1);
+            return 0;
+        }
+        for (j = 0; ; ++j) {
+            symname = nn_symbol (i, &symval);
+            if (!strncmp(symname, optname, optname_len) &&
+                symname [optname_len] == 0)
+            {
+                optid = symval;
+                break;
+            }
+        }
+        if (!*symname) {
+            nc_report_error (worker, "Socket option not found", -1);
+            continue;
+        }
+        /*  If prefixed by protocol name then it's protocol level, else it's
+         *  NN_SOL_SOCKET level option  */
+        if (self->protocol_len < optname_len &&
+            !memcmp (optname, self->protocol, self->protocol_len) &&
+            optname [self->protocol_len] == '_') {
+            optlev = self->protoid;
+        } else {
+            optlev = NN_SOL_SOCKET;
+        }
+        if (!nc_parse_and_set_option (self->socket, optid, optlev,
+            &buf, &buflen))
+            return 0;
+    }
+
+    if (!nc_mp_parse_array (&buf, &buflen, &addressnum)) {
+        nc_report_error (worker, "Address list is not an array", -1);
+        return 0;
+    }
+
+    for (i = 0; i < addressnum; ++i) {
+        if (!nc_mp_parse_array (&buf, &buflen, &tuplelen))
+            return 0;
+        if (tuplelen < 2 || tuplelen > 3) {
+            nc_report_error (worker, "Address tuple has wrong length", -1);
+            return 0;
+        }
+        if (!nc_mp_parse_int (&buf, &buflen, &kind) ||
+            kind != 0 || kind != 1)
+        {
+            nc_report_error (worker, "Wrong address kind", -1);
+            return 0;
+        }
+        if (!nc_mp_parse_string (&buf, &buflen, &addr, &addrlen)) {
+            nc_report_error (worker, "Address is not a string", -1);
+            return 0;
+        }
+        colonchar = strchr (addr, ':');
+        if (!colonchar) {
+            nc_report_error (worker, "Address has no transport name", -1);
+            return 0;
+        }
+        translen = colonchar - translen;
+
+        for (j = 0; ; ++j) {
+            symname = nn_symbol (i, &symval);
+            if (!strncmp (symname, "NN_", 3) &&
+                !strcasecmp (symname+3, addr, translen)
+                symname [translen+3] == 0)
+            {
+                transpref = symval;
+                translen += 3;
+                break;
+            }
+        }
+        if (!*symname) {
+            nc_report_error (worker, "Transport not found", -1);
+            continue;
+        }
+
+        if (tuplelen > 2) {
+            if (!nc_mp_parse_mapping (&buf, &buflen, &optpairs)) {
+                nc_report_error (worker, "Options are not a mapping", -1);
+                return 0;
+            }
+            for (i = 0; i < optpairs; ++i) {
+                if (!nc_mp_parse_string (&buf, &buflen, &optname, &optname_len)) {
+                    nc_report_error (worker, "Socket option key is not a string", -1);
+                    return 0;
+                }
+                for (j = 0; ; ++j) {
+                    symname = nn_symbol (i, &symval);
+                    if (!strncmp (symname, optname, optname_len) &&
+                        symname [optname_len] == 0)
+                    {
+                        optid = symval;
+                        break;
+                    }
+                }
+                if (!*symname) {
+                    nc_report_error (worker, "Socket option not found", -1);
+                    continue;
+                }
+                /*  If prefixed by transport name then it's transport level,
+                 *  else it's NN_SOL_SOCKET level option  */
+                if (self->protocol_len < optname_len &&
+                    !memcmp (optname, transpref, translen) &&
+                    optname [translen] == '_') {
+                    optlev = transid;
+                } else {
+                    optlev = NN_SOL_SOCKET;
+                }
+                if (!nc_parse_and_set_option (self->socket, optid, optlev,
+                    &buf, &buflen))
+                    return 0;
+            }
+        }
+
+        addrbuf = nn_alloc (addrlen+1, "temporary_addr_buf");
+        memcpy (addrbuf, addr, addrlen);
+        addrbuf [addrlen] = 1;
+
+        if (kind == 0) {
+            rc = nc_bind (self->socket, addrbuf);
+        } else if(kind == 1) {
+            rc = nc_connect (self->socket, addrbuf);
+        }
+        if (rc < 0)
+            nc_report_errno (worker, "Cant set address", -1);
+        free (addrbuf);
+    }
+
+    for (sub = self->subscr_list.head; sub; ++sub) {
+        sub->visited = 0;
+    }
+
+    if (ralen > 3) {
+        if (!nc_mp_parse_array (&buf, &buflen, &topicnum)) {
+            nc_report_errno (worker, "Subscriptions must be array", -1);
+            return 0;
+        }
+        for (i = 0; i < topicnum; ++i) {
+            if (!nc_mp_parse_string (&buf, &buflen, &topic, &topiclen)) {
+                nc_report_error (worker, "Subscription must be string");
+                return 0;
+            }
+
+            for (sub = self->subscr_list.head; sub; ++sub) {
+                if (sub->topic->topic_len == topiclen &&
+                    !memcmp (sub->topic->topic, topic, topiclen)) {
+                    sub->visited = 1;
+                }
+            }
+
+            if(!sub) {
+                sub = nn_alloc(sizeof(struct nn_subscription), "subscription");
+
+
+
+            }
+        }
+    }
+
+    return 1;
 }
 
 static void nc_process_responses (struct nc_worker *self) {
@@ -412,9 +674,9 @@ static void nc_process_updates (struct nc_worker *self) {
     char *buf;
     int buflen;
     int rc;
-    struct nn_socket *item;
-    struct nn_subscription *sub;
-    struct nn_topic *topic;
+    struct nc_socket *item;
+    struct nc_subscription *sub;
+    struct nc_topic *topic;
 
     while(1) {
         buflen = nn_recv (self->updates_socket, &buf, NN_MSG, NN_DONTWAIT);
