@@ -358,20 +358,20 @@ static int nc_parse_and_set_option (int sock, int optlev, int optid,
         rc = nn_setsockopt (sock, optlev, optid, &intopt, sizeof(intopt));
         if (rc < 0)
             nc_report_errno (worker, "Failed to set option");
-    } else if (nc_mp_parse_string (&buf, &buflen,
+    } else if (nc_mp_parse_string (buf, buflen,
         &stropt, &stroptlen)) {
         rc = nn_setsockopt (self->socket, optlev, optid,
             stropt, stroptlen);
         if (rc < 0)
             nc_report_errno (worker, "Failed to set option");
-    } else if (nc_mp_parse_array (&buf, &buflen, &optarrlen)) {
+    } else if (nc_mp_parse_array (buf, buflen, &optarrlen)) {
         for (int j = 0; j < optarrlen; ++j) {
-            if (nc_mp_parse_int (&buf, &buflen, &intopt)) {
+            if (nc_mp_parse_int (buf, buflen, &intopt)) {
                 rc = nn_setsockopt (self->socket, optlev, optid,
                     &intopt, sizeof(intopt));
                 if (rc < 0)
                     nc_report_errno (worker, "Failed to set option");
-            } else if (nc_mp_parse_string (&buf, &buflen,
+            } else if (nc_mp_parse_string (buf, buflen,
                                            &stropt, &stroptlen)) {
                 rc = nn_setsockopt (self->socket, optlev, optid,
                     stropt, stroptlen);
@@ -442,6 +442,7 @@ static int nc_parse_and_apply (struct nc_worker *worker,
     int topicnum;
     char *topic;
     int topiclen;
+    struct nc_topic *tnode;
     struct nc_subscription *sub;
 
     if (!nc_mp_parse_array (&buf, &buflen, &ralen))
@@ -620,14 +621,39 @@ static int nc_parse_and_apply (struct nc_worker *worker,
                 }
             }
 
-            if(!sub) {
-                sub = nn_alloc(sizeof(struct nn_subscription), "subscription");
+            if (!sub) {
+                sub = nn_alloc (sizeof (struct nc_subscription),
+                                "subscription");
 
-
-
+                for (tnode = worker->topic_list.head; tnode;
+                     tnode = tnode->next)
+                {
+                    if (tnode->topic_len == topiclen &&
+                        !memcmp (tnode->topic, topic, topiclen)
+                        break;
+                }
+                if (!tnode) {
+                    tnode = nn_alloc (sizeof (struct nc_topic) + topiclen,
+                        "topic");
+                    memcpy (tnode->topic, topic, topiclen);
+                    tnode->topic_len = topiclen;
+                    tnode->subscr_list.head = NULL;
+                    tnode->subscr_list.tail = &tnode->subscr_list.head;
+                    *worker->topic_list.tail = tnode;
+                    tnode->next = NULL;
+                    worker->topic_list.tail = &tnode->next;
+                }
+                sub->socket_list.next = NULL;
+                *self->subscr_list.tail = sub;
+                self->subscr_list.tail = &sub->socket_list.next;
+                sub->topic_list.next = NULL;
+                *tnode->subscr_list.tail = sub;
+                tnode->subscr_list.tail = &sub->topic_list.next;
             }
         }
     }
+
+    /*  Anything is allowed at the end of the list for forward compatibility */
 
     return 1;
 }
