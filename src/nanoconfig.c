@@ -1,4 +1,9 @@
+#include <stdlib.h>
+
 #include <nanomsg/nn.h>
+#include <nanomsg/reqrep.h>
+#include <nanomsg/pubsub.h>
+#include <nanomsg/pipeline.h>
 
 #include "worker.h"
 #include "utils/err.h"
@@ -13,14 +18,14 @@ static void nc_setup_request_socket ()
     addr = getenv ("NN_CONFIG_SERVICE");
     if (!addr) {
         fprintf (stderr, "nanoconfig: NN_CONFIG_SERVICE must be set");
-        abort();
+        nn_err_abort();
     }
 
     self.request_socket = nn_socket (AF_SP_RAW, NN_REQ);
     if (self.request_socket < 0) {
         fprintf (stderr, "nanoconfig: Can't create nanomsg socket: %s",
             nn_strerror(errno));
-        abort();
+        nn_err_abort();
     }
 
     rc = nn_connect (self.request_socket, addr);
@@ -28,7 +33,7 @@ static void nc_setup_request_socket ()
         fprintf (stderr,
             "nanoconfig: Can't connect to configuration service: %s",
             nn_strerror(errno));
-        abort();
+        nn_err_abort();
     }
 }
 
@@ -52,7 +57,7 @@ static void nc_setup_updates_socket ()
             fprintf (stderr,
                 "nanoconfig: Can't connect to configuration service: %s",
                 nn_strerror(errno));
-            abort();
+            nn_err_abort();
         }
 
 
@@ -67,11 +72,11 @@ static void nc_setup_worker_socket ()
 {
     int rc;
 
-    self.worker_socket = nn_socket (AF_SP, PUSH);
+    self.worker_socket = nn_socket (AF_SP, NN_PUSH);
     if (self.worker_socket < 0) {
         fprintf (stderr, "nanoconfig: Can't create nanomsg socket: %s",
             nn_strerror(errno));
-        abort();
+        nn_err_abort();
     }
 
     rc = nn_connect (self.worker_socket, "inproc://nanoconfig-worker");
@@ -79,7 +84,7 @@ static void nc_setup_worker_socket ()
         fprintf (stderr,
             "nanoconfig: Can't connect inproc socket: %s",
             nn_strerror(errno));
-        abort();
+        nn_err_abort();
     }
 }
 

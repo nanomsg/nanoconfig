@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Insollo Entertainment, LLC.  All rights reserved.
+    Copyright (c) 2013 GoPivotal, Inc.  All rights reserved.
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"),
@@ -20,33 +20,52 @@
     IN THE SOFTWARE.
 */
 
-#ifndef NC_WORKER_H_INCLUDED
-#define NC_WORKER_H_INCLUDED
+#ifndef NN_INT_INCLUDED
+#define NN_INT_INCLUDED
 
-#include "state.h"
+#if defined NN_HAVE_WINDOWS
 
-enum nc_command_tag {
-    NC_CONFIGURE = 1,
-    NC_CLOSE = 2,
-    NC_SHUTDOWN = 99
-};
+/*  Old versions of MSVC don't ship with stdint.h header file.
+    Thus, we have to define fix-sized integer type ourselves. */
 
-struct nc_command_close {
-    int tag;
-    int socket;
-};
+#ifndef int8_t
+typedef __int8 int8_t;
+#endif
+#ifndef uint8_t
+typedef unsigned __int8 uint8_t;
+#endif
+#ifndef int16_t
+typedef __int16 int16_t;
+#endif
+#ifndef uint16_t
+typedef unsigned __int16 uint16_t;
+#endif
+#ifndef int32_t
+typedef __int32 int32_t;
+#endif
+#ifndef uint32_t
+typedef unsigned __int32 uint32_t;
+#endif
+#ifndef int64_t
+typedef __int64 int64_t;
+#endif
+#ifndef uint64_t
+typedef unsigned __int64 uint64_t;
+#endif
 
-struct nc_command_shutdown {
-    int tag;
-};
+#elif defined NN_HAVE_SOLARIS || defined NN_HAVE_OPENVMS
 
-struct nc_command_configure {
-    int tag;
-    int socket;
-    char url[];
-};
+/*  Solaris and OpenVMS don't have standard stdint.h header, rather the fixed
+    integer types are defined in inttypes.h. */
+#include <inttypes.h>
 
-void nc_worker_start(struct nc_state *state);
-void nc_worker_stop(struct nc_state *state);
+#else
+
+/*  Fully POSIX-compliant platforms have fixed integer types defined
+    in stdint.h. */
+#include <stdint.h>
 
 #endif
+
+#endif
+

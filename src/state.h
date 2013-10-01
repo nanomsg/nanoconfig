@@ -23,10 +23,15 @@
 #ifndef NC_STATE_H_INCLUDED
 #define NC_STATE_H_INCLUDED
 
+#include "utils/thread.h"
+
+#define NC_URL_MAX 512
+
+
 struct nc_state {
     int initialized;
     int request_socket;
-    int update_socket;
+    int updates_socket;
     int worker_socket;
     struct nn_thread worker;
 };

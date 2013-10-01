@@ -20,13 +20,17 @@
     IN THE SOFTWARE.
 */
 #include <poll.h>
+#include <stdint.h>
 
 #include <nanomsg/nn.h>
+#include <nanomsg/pipeline.h>
 
 #include "utils/thread.h"
 #include "utils/err.h"
 #include "utils/random.h"
-#include "state.h"
+#include "utils/alloc.h"
+#include "utils/clock.h"
+#include "worker.h"
 
 /*  Amount of ms to wait if nn_send failed or reply is invalid  */
 #define NC_ERROR_RETRY_TIME 100
@@ -50,8 +54,10 @@ enum {
 
 
 struct nc_topic {
+    struct nc_topic *next;
+    struct nc_topic **prev;
 
-    struct nc_subscr_list {
+    struct nc_topic_subscr_list {
         struct nc_subscription *head;
         struct nc_subscription **tail;
     } subscr_list;
@@ -87,14 +93,14 @@ struct nc_socket {
     struct nc_socket **prev;
     struct nc_socket *next;
 
-    struct nc_subscr_list {
+    struct nc_sock_subscr_list {
         struct nc_subscription *head;
         struct nc_subscription **tail;
     } subscr_list;
 
     /*  A protocol name to use for socket option matching and in request  */
     int protocol_len;
-    char *protocol;
+    const char *protocol;
     int protoid;
     /*  A buffer for name request  */
     int request_len;
@@ -110,6 +116,7 @@ struct nc_worker {
     int updates_rcvfd;
     int running;
     uint32_t next_request_id;
+    struct nn_clock clock;
 
     /*  TODO(tailhook) add ifdefs for Windows */
     struct pollfd fds [NC_POLL_NUM];
@@ -143,7 +150,7 @@ static struct nc_socket *nc_list_find (struct nc_worker *self, int num)
 {
     struct nc_socket *res;
 
-    for (res = self->head; res; res = res->next) {
+    for (res = self->socket_list.head; res; res = res->next) {
         if (res->socket_no == num)
             break;
     }
@@ -155,11 +162,11 @@ static struct nc_socket *nc_list_find (struct nc_worker *self, int num)
 static void nc_setup_cmd_socket (struct nc_worker *self) {
     int rc;
 
-    self->cmd_socket = nn_socket (AF_SP, PUSH);
+    self->cmd_socket = nn_socket (AF_SP, NN_PULL);
     if (self->cmd_socket < 0) {
         fprintf (stderr, "nanoconfig: Can't create nanomsg socket: %s",
             nn_strerror(errno));
-        abort();
+        nn_err_abort();
     }
 
     rc = nn_bind (self->cmd_socket, "inproc://nanoconfig-worker");
@@ -167,7 +174,7 @@ static void nc_setup_cmd_socket (struct nc_worker *self) {
         fprintf (stderr,
             "nanoconfig: Can't connect inproc socket: %s",
             nn_strerror(errno));
-        abort();
+        nn_err_abort();
     }
 }
 
@@ -181,14 +188,14 @@ static void nc_setup_pollfd (struct nc_worker *self)
     rc = nn_getsockopt (self->cmd_socket, NN_SOL_SOCKET, NN_RCVFD,
         &self->cmd_rcvfd, &optlen);
     errno_assert (rc >= 0);
-    nn_assert (self->cmd_rcvfd > = 0);
+    nn_assert (self->cmd_rcvfd >= 0);
     self->fds [NC_POLL_CMD_RCVFD].fd = self->cmd_rcvfd;
     self->fds [NC_POLL_CMD_RCVFD].events = POLLIN;
 
     rc = nn_getsockopt (self->request_socket, NN_SOL_SOCKET, NN_RCVFD,
         &self->request_rcvfd, &optlen);
     errno_assert (rc >= 0);
-    nn_assert (self->request_rcvfd > = 0);
+    nn_assert (self->request_rcvfd >= 0);
     self->fds [NC_POLL_REQUEST_RCVFD].fd = self->cmd_rcvfd;
     self->fds [NC_POLL_REQUEST_RCVFD].events = POLLIN;
 
@@ -196,7 +203,7 @@ static void nc_setup_pollfd (struct nc_worker *self)
         rc = nn_getsockopt (self->updates_socket, NN_SOL_SOCKET, NN_RCVFD,
             &self->updates_rcvfd, &optlen);
         errno_assert (rc >= 0);
-        nn_assert (self->updates_rcvfd > = 0);
+        nn_assert (self->updates_rcvfd >= 0);
         self->fds [NC_POLL_UPDATES_RCVFD].fd = self->updates_rcvfd;
         self->fds [NC_POLL_UPDATES_RCVFD].events = POLLIN;
     }
@@ -205,15 +212,16 @@ static void nc_setup_pollfd (struct nc_worker *self)
 static int nc_poll_exec (struct nc_worker *self, int timeout)
 {
     int num;
+    int rc;
 
-    num = NN_POLL_NUM;
+    num = NC_POLL_NUM;
     if(self->updates_socket < 0) {
         num -= 1;
     }
     timeout = 60000;
 
     /*  TODO(tailhook) insert ifdefs for windows' WSAPoll  */
-    rc = poll (self->pollfds, num, timeo);
+    rc = poll (self->fds, num, timeout);
 
     if (rc < 0) {
         if (errno == EINTR)
@@ -229,15 +237,16 @@ static void nc_process_configure (struct nc_worker *self,
     struct nc_socket *sock;
     int rc;
     int urllen;
+    int reqlen;
     int proto;
-    int optlen;
+    size_t optlen;
     int i;
     int constval;
     int constlen;
-    char *nnconst;
+    const char *nconst;
     char *target;
 
-    sock = nc_list_find (self, cmd->socket)
+    sock = nc_list_find (self, cmd->socket);
 
     if (sock) {
         sock->state = NC_STATE_STARTING;  /*  Will resend request ASAP  */
@@ -249,8 +258,8 @@ static void nc_process_configure (struct nc_worker *self,
         nn_assert (optlen == sizeof(int));
 
         for (i = 0; ; ++i) {
-            nnconst = nn_symbol (i, &constval);
-            assert (nnconst); /*  Must break before the end of the list  */
+            nconst = nn_symbol (i, &constval);
+            assert (nconst); /*  Must break before the end of the list  */
             if (constval == proto)
                 break;
         }
@@ -276,7 +285,7 @@ static void nc_process_configure (struct nc_worker *self,
         memcpy (target, cmd->url, urllen);
         target += urllen;
         *target++ = ' ';
-        memcpy (target, nnconst, constlen);
+        memcpy (target, nconst, constlen);
         sock->request_len = reqlen;
         sock->protocol = nconst;
         sock->protocol_len = constlen;
@@ -293,7 +302,7 @@ static void nc_process_close (struct nc_worker *self,
 {
     struct nc_socket *sock;
 
-    sock = nc_list_find (self, cmd->socket)
+    sock = nc_list_find (self, cmd->socket);
     if (!sock) {
         /*  Allow not configured sockets to close this is to avoid too much
             checking for which sockets are configured by nanoconfig and which
@@ -330,10 +339,10 @@ static void nc_process_commands (struct nc_worker *self)
         switch (tag)
         {
         case NC_CONFIGURE:
-            nc_process_configure (self, *(struct nc_command_configure *)buf);
+            nc_process_configure (self, (struct nc_command_configure *)buf);
             break;
         case NC_CLOSE:
-            nc_process_close (self, *(struct nc_command_close *)buf);
+            nc_process_close (self, (struct nc_command_close *)buf);
             break;
         case NC_SHUTDOWN:
             self->running = 0;
@@ -344,7 +353,8 @@ static void nc_process_commands (struct nc_worker *self)
     }
 }
 
-static int nc_parse_and_set_option (int sock, int optlev, int optid,
+static int nc_parse_and_set_option (struct nc_worker *worker,
+    int sock, int optlev, int optid,
     char **buf, int *buflen)
 {
     int intopt;
@@ -353,27 +363,29 @@ static int nc_parse_and_set_option (int sock, int optlev, int optid,
     int optarrlen;
     char *symname;
     int symval;
+    int rc;
+    int j;
 
     if (nc_mp_parse_int (buf, buflen, &intopt)) {
-        rc = nn_setsockopt (sock, optlev, optid, &intopt, sizeof(intopt));
+        rc = nn_setsockopt (sock, optlev, optid, &intopt, sizeof (intopt));
         if (rc < 0)
             nc_report_errno (worker, "Failed to set option");
     } else if (nc_mp_parse_string (buf, buflen,
         &stropt, &stroptlen)) {
-        rc = nn_setsockopt (self->socket, optlev, optid,
+        rc = nn_setsockopt (sock, optlev, optid,
             stropt, stroptlen);
         if (rc < 0)
             nc_report_errno (worker, "Failed to set option");
     } else if (nc_mp_parse_array (buf, buflen, &optarrlen)) {
-        for (int j = 0; j < optarrlen; ++j) {
+        for (j = 0; j < optarrlen; ++j) {
             if (nc_mp_parse_int (buf, buflen, &intopt)) {
-                rc = nn_setsockopt (self->socket, optlev, optid,
+                rc = nn_setsockopt (sock, optlev, optid,
                     &intopt, sizeof(intopt));
                 if (rc < 0)
                     nc_report_errno (worker, "Failed to set option");
             } else if (nc_mp_parse_string (buf, buflen,
                                            &stropt, &stroptlen)) {
-                rc = nn_setsockopt (self->socket, optlev, optid,
+                rc = nn_setsockopt (sock, optlev, optid,
                     stropt, stroptlen);
                 if (rc < 0)
                     nc_report_errno (worker, "Failed to set option");
@@ -421,12 +433,16 @@ static int nc_parse_and_apply (struct nc_worker *worker,
     int ralen;
     int retcode;
     int errcode;
+    char *errstr;
+    int errstrlen;
     char *optname;
     int optnamelen;
     int i;
     int j;
-    char *symname;
+    int rc;
+    const char *symname;
     int symval;
+    int optpairs;
     int optid;
     int optlev;
     int addressnum;
@@ -437,7 +453,7 @@ static int nc_parse_and_apply (struct nc_worker *worker,
     char *colonchar;
     int translen;
     int transid;
-    char *transpref;
+    const char *transpref;
     char *addrbuf;
     int topicnum;
     char *topic;
@@ -471,14 +487,14 @@ static int nc_parse_and_apply (struct nc_worker *worker,
         return 0;
     }
     for (i = 0; i < optpairs; ++i) {
-        if (!nc_mp_parse_string (&buf, &buflen, &optname, &optname_len)) {
+        if (!nc_mp_parse_string (&buf, &buflen, &optname, &optnamelen)) {
             nc_report_error (worker, "Socket option key is not a string", -1);
             return 0;
         }
         for (j = 0; ; ++j) {
             symname = nn_symbol (i, &symval);
-            if (!strncmp(symname, optname, optname_len) &&
-                symname [optname_len] == 0)
+            if (!strncmp(symname, optname, optnamelen) &&
+                symname [optnamelen] == 0)
             {
                 optid = symval;
                 break;
@@ -490,14 +506,14 @@ static int nc_parse_and_apply (struct nc_worker *worker,
         }
         /*  If prefixed by protocol name then it's protocol level, else it's
          *  NN_SOL_SOCKET level option  */
-        if (self->protocol_len < optname_len &&
+        if (self->protocol_len < optnamelen &&
             !memcmp (optname, self->protocol, self->protocol_len) &&
             optname [self->protocol_len] == '_') {
             optlev = self->protoid;
         } else {
             optlev = NN_SOL_SOCKET;
         }
-        if (!nc_parse_and_set_option (self->socket, optid, optlev,
+        if (!nc_parse_and_set_option (worker, self->socket_no, optid, optlev,
             &buf, &buflen))
             return 0;
     }
@@ -529,15 +545,15 @@ static int nc_parse_and_apply (struct nc_worker *worker,
             nc_report_error (worker, "Address has no transport name", -1);
             return 0;
         }
-        translen = colonchar - translen;
+        translen = colonchar - addr;
 
         for (j = 0; ; ++j) {
             symname = nn_symbol (i, &symval);
             if (!strncmp (symname, "NN_", 3) &&
-                !strcasecmp (symname+3, addr, translen)
+                !strncasecmp (symname+3, addr, translen) &&
                 symname [translen+3] == 0)
             {
-                transpref = symval;
+                transpref = symname;
                 translen += 3;
                 break;
             }
@@ -553,14 +569,17 @@ static int nc_parse_and_apply (struct nc_worker *worker,
                 return 0;
             }
             for (i = 0; i < optpairs; ++i) {
-                if (!nc_mp_parse_string (&buf, &buflen, &optname, &optname_len)) {
-                    nc_report_error (worker, "Socket option key is not a string", -1);
+                if (!nc_mp_parse_string (&buf, &buflen,
+                                         &optname, &optnamelen))
+                {
+                    nc_report_error (worker,
+                        "Socket option key is not a string", -1);
                     return 0;
                 }
                 for (j = 0; ; ++j) {
                     symname = nn_symbol (i, &symval);
-                    if (!strncmp (symname, optname, optname_len) &&
-                        symname [optname_len] == 0)
+                    if (!strncmp (symname, optname, optnamelen) &&
+                        symname [optnamelen] == 0)
                     {
                         optid = symval;
                         break;
@@ -572,15 +591,15 @@ static int nc_parse_and_apply (struct nc_worker *worker,
                 }
                 /*  If prefixed by transport name then it's transport level,
                  *  else it's NN_SOL_SOCKET level option  */
-                if (self->protocol_len < optname_len &&
+                if (self->protocol_len < optnamelen &&
                     !memcmp (optname, transpref, translen) &&
                     optname [translen] == '_') {
                     optlev = transid;
                 } else {
                     optlev = NN_SOL_SOCKET;
                 }
-                if (!nc_parse_and_set_option (self->socket, optid, optlev,
-                    &buf, &buflen))
+                if (!nc_parse_and_set_option (worker, self->socket_no,
+                    optid, optlev, &buf, &buflen))
                     return 0;
             }
         }
@@ -590,13 +609,13 @@ static int nc_parse_and_apply (struct nc_worker *worker,
         addrbuf [addrlen] = 1;
 
         if (kind == 0) {
-            rc = nc_bind (self->socket, addrbuf);
+            rc = nc_bind (self->socket_no, addrbuf);
         } else if(kind == 1) {
-            rc = nc_connect (self->socket, addrbuf);
+            rc = nc_connect (self->socket_no, addrbuf);
         }
         if (rc < 0)
             nc_report_errno (worker, "Cant set address", -1);
-        free (addrbuf);
+        nn_free (addrbuf);
     }
 
     for (sub = self->subscr_list.head; sub; ++sub) {
@@ -629,7 +648,7 @@ static int nc_parse_and_apply (struct nc_worker *worker,
                      tnode = tnode->next)
                 {
                     if (tnode->topic_len == topiclen &&
-                        !memcmp (tnode->topic, topic, topiclen)
+                        !memcmp (tnode->topic, topic, topiclen))
                         break;
                 }
                 if (!tnode) {
@@ -661,8 +680,9 @@ static int nc_parse_and_apply (struct nc_worker *worker,
 static void nc_process_responses (struct nc_worker *self) {
     char *buf;
     int buflen;
-    int rc
-    struct nn_socket *item;
+    int rc;
+    struct nc_socket *item;
+    uint32_t request_id;
 
     while(1) {
         buflen = nn_recv (self->request_socket, &buf, NN_MSG, NN_DONTWAIT);
@@ -684,10 +704,10 @@ static void nc_process_responses (struct nc_worker *self) {
                     break;  /*  Already has a reply or request reset  */
                 item->state = NC_STATE_SLEEPING;
                 if (nc_parse_and_apply (self, item, buf, buflen)) {
-                    item->retry_time = nc_clock_now (worker->clock) +
+                    item->retry_time = nc_clock_now (self->clock) +
                         NC_REQUEST_AGAIN_TIME;
                 } else {
-                    item->retry_time = nc_clock_now (worker->clock) +
+                    item->retry_time = nc_clock_now (self->clock) +
                         NC_ERROR_RETRY_TIME;
                 }
                 break;
@@ -721,7 +741,9 @@ static void nc_process_updates (struct nc_worker *self) {
             if (buflen < topic->topic_len)
                 continue;
             if (!memcmp (topic->topic, buf, topic->topic_len)) {
-                for (sub = topic->subscr_list.head; sub; sub = item->next) {
+                for (sub = topic->subscr_list.head; sub;
+                     sub = sub->topic_list.next)
+                {
                     sub->socket->state = NC_STATE_STARTING;
                 }
             }
@@ -729,13 +751,14 @@ static void nc_process_updates (struct nc_worker *self) {
     }
 }
 
-static uint64_t nc_process_timers (struct nn_worker *self) {
+static uint64_t nc_process_timers (struct nc_worker *self) {
     int rc;
     uint64_t now;
     uint64_t next_timeout;
+    struct nc_socket *item;
 
     next_timeout = now + 60000;
-    now = nn_clock_now (self);
+    now = nn_clock_now (&self->clock);
 
     for (item = self->socket_list.head; item; item = item->next) {
         if (item->state != NC_STATE_STARTING && item->retry_time < now) {
@@ -746,7 +769,7 @@ static uint64_t nc_process_timers (struct nn_worker *self) {
         if (item->state == NC_STATE_STARTING) {
             item->request_id = self->next_request_id;
             self->next_request_id += 1;
-            if (self->next_request_id == 0x80000000u) {
+            if (self->next_request_id == 0x80000000u)
                 self->next_request_id = 0;
             *(uint32_t *)item->request =
                 htonl(self->next_request_id) | 0x80000000u;
@@ -762,15 +785,17 @@ static uint64_t nc_process_timers (struct nn_worker *self) {
                     item->retry_time = now + NC_ERROR_RETRY_TIME;
                     item->state = NC_STATE_SLEEPING;
                     next_timeout = min (next_timeout, item->retry_time);
+                    continue;
                 } else {
                     errno_assert (0);
                 }
             }
-            item->state = NC_REQUEST_SENT;
-            item->retry_type = NC_REQUEST_WAIT_TIME
+            item->state = NC_STATE_REQUEST_SENT;
+            item->retry_time = now + NC_REQUEST_WAIT_TIME;
+            next_timeout = min (next_timeout, item->retry_time);
         }
     }
-    now = nn_clock_now (self);
+    now = nn_clock_now (&self->clock);
     if (next_timeout > now)
         return now - next_timeout;
     return 0;
@@ -820,19 +845,21 @@ static void nc_worker_loop (void *data)
     }
 };
 
-void nc_worker_start(struct nc_state *state) {
+void nc_worker_start (struct nc_state *state) {
     struct nc_worker *self;
     nn_random_seed();
 
     self = &worker_struct;
     self->request_socket = state->request_socket;
-    self->update_socket = state->update_socket;
+    self->updates_socket = state->updates_socket;
     self->socket_list.head = NULL;
-    self->socket_list.tail = &self->socketlist.head;
+    self->socket_list.tail = &self->socket_list.head;
     self->topic_list.head = NULL;
-    self->topic_list.tail = &self->socketlist.head;
+    self->topic_list.tail = &self->topic_list.head;
     self->running = 1;
-    nn_random_generate (&self->next_request_id, sizeof(self->next_request_id));
+    nn_clock_init (&self->clock);
+    nn_random_generate (&self->next_request_id,
+        sizeof (self->next_request_id));
 
     nn_thread_init (&state->worker, nc_worker_loop, self);
 
@@ -840,5 +867,6 @@ void nc_worker_start(struct nc_state *state) {
 
 void nc_worker_term (struct nc_state *state) {
     nn_thread_term (&state->worker);
+    nn_clock_term (&worker_struct.clock);
 }
 
