@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <ctype.h>
 
 #include <nanomsg/nn.h>
 #include <nanomsg/reqrep.h>
@@ -91,7 +92,6 @@ static void nc_setup_worker_socket ()
 
 static void nc_start() {
     char addr;
-    int rc;
 
     if (self.initialized)
         return;
@@ -183,5 +183,5 @@ void nc_term () {
             errno_assert (rc < 0);
         }
     }
-    nn_worker_stop (&self);
+    nc_worker_stop (&self);
 }
