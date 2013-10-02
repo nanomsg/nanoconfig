@@ -1,0 +1,44 @@
+# Here is a mapping between requests and responses for the name services
+# For this example name services it's intentional that requests and replies
+# are specified as is (except replies are encoded with msgpack)
+#
+# If you're not familiar with YAML or you believe this looks ugly, try JSON:
+#    python yaml2json.py < config.yaml > config.json
+
+
+RESOLVE nanoconfig://hello NN_REQ:
+  # success code
+  - 1
+  # socket options
+  - NN_LINGER: 1000
+    NN_SOCKET_NAME: "hello"
+  # list of adresses
+  - - - 0  # 0 -- bind, 1 -- connect
+      - "tcp://127.0.0.1:1234" # the addresss
+      # Socket options, optional
+      - NN_SNDPRIO: 1
+        NN_LINGER: 1000
+        NN_TCP_NODELAY: 1
+    # shorter form
+    - [1, "ipc:///tmp/test", {NN_SNDPRIO: 2}]
+
+RESOLVE nanoconfig://hello NN_REP:
+  - 1
+  - {}  # empty options
+  # endpoint options may be skipped at all
+  - - [1, "tcp://127.0.0.1:1234" ]
+
+RESOLVE nanoconfig://hello?fallback NN_REP:
+  - 1
+  - {}
+  - - [0, "ipc:///tmp/test" ]
+
+RESOLVE nanoconfig://bye NN_REQ:
+  - 1
+  - NN_SOCKET_NAME: "bye-req"
+  - - [1, "tcp://127.0.0.1:1235"]
+
+RESOLVE nanoconfig://bye NN_REP:
+  - 1
+  - NN_SOCKET_NAME: "bye-rep"
+  - - [0, "tcp://127.0.0.1:1235"]

@@ -1,6 +1,7 @@
 cmake_minimum_required (VERSION 2.6)
 
 project (nanoconfig)
+find_package (Threads)
 
 add_library (nanoconfig
     src/nanoconfig.c
@@ -12,4 +13,14 @@ add_library (nanoconfig
     src/utils/clock.c
     src/utils/msgpack.c
     )
-target_link_libraries (nanoconfig nanomsg)
+target_link_libraries (nanoconfig nanomsg ${CMAKE_THREAD_LIBS_INIT})
+
+add_executable (nccat
+    tools/nanocat.c
+    tools/options.c)
+target_link_libraries (nccat nanoconfig)
+
+add_executable (ncdev
+    tools/nanodev.c
+    tools/options.c)
+target_link_libraries (ncdev nanoconfig)

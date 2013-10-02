@@ -18,13 +18,13 @@ static void nc_setup_request_socket ()
 
     addr = getenv ("NN_CONFIG_SERVICE");
     if (!addr) {
-        fprintf (stderr, "nanoconfig: NN_CONFIG_SERVICE must be set");
+        fprintf (stderr, "nanoconfig: NN_CONFIG_SERVICE must be set\n");
         nn_err_abort();
     }
 
     self.request_socket = nn_socket (AF_SP_RAW, NN_REQ);
     if (self.request_socket < 0) {
-        fprintf (stderr, "nanoconfig: Can't create nanomsg socket: %s",
+        fprintf (stderr, "nanoconfig: Can't create nanomsg socket: %s\n",
             nn_strerror(errno));
         nn_err_abort();
     }
@@ -32,7 +32,7 @@ static void nc_setup_request_socket ()
     rc = nn_connect (self.request_socket, addr);
     if (rc < 0) {
         fprintf (stderr,
-            "nanoconfig: Can't connect to configuration service: %s",
+            "nanoconfig: Can't connect to configuration service: %s\n",
             nn_strerror(errno));
         nn_err_abort();
     }
@@ -48,7 +48,7 @@ static void nc_setup_updates_socket ()
 
         self.updates_socket = nn_socket (AF_SP, NN_SUB);
         if (self.updates_socket < 0) {
-            fprintf (stderr, "nanoconfig: Can't create nanomsg socket: %s",
+            fprintf (stderr, "nanoconfig: Can't create nanomsg socket: %s\n",
                 nn_strerror(errno));
             abort();
         }
@@ -56,7 +56,7 @@ static void nc_setup_updates_socket ()
         rc = nn_connect (self.updates_socket, addr);
         if (rc < 0) {
             fprintf (stderr,
-                "nanoconfig: Can't connect to configuration service: %s",
+                "nanoconfig: Can't connect to configuration service: %s\n",
                 nn_strerror(errno));
             nn_err_abort();
         }
@@ -75,7 +75,7 @@ static void nc_setup_worker_socket ()
 
     self.worker_socket = nn_socket (AF_SP, NN_PUSH);
     if (self.worker_socket < 0) {
-        fprintf (stderr, "nanoconfig: Can't create nanomsg socket: %s",
+        fprintf (stderr, "nanoconfig: Can't create nanomsg socket: %s\n",
             nn_strerror(errno));
         nn_err_abort();
     }
@@ -83,7 +83,7 @@ static void nc_setup_worker_socket ()
     rc = nn_connect (self.worker_socket, "inproc://nanoconfig-worker");
     if (rc < 0) {
         fprintf (stderr,
-            "nanoconfig: Can't connect inproc socket: %s",
+            "nanoconfig: Can't connect inproc socket: %s\n",
             nn_strerror(errno));
         nn_err_abort();
     }
@@ -91,8 +91,6 @@ static void nc_setup_worker_socket ()
 
 
 static void nc_start() {
-    char addr;
-
     if (self.initialized)
         return;
 
@@ -142,7 +140,7 @@ int nc_configure (int sock, char *url) {
     strcpy (cmd->url, url);
 
 
-    rc = nn_send (self.worker_socket, &cmd, sizeof(cmd), 0);
+    rc = nn_send (self.worker_socket, cmd, cmdlen, 0);
     if (rc < 0) {
         err = errno;
         nn_freemsg (cmd);
@@ -183,5 +181,5 @@ void nc_term () {
             errno_assert (rc < 0);
         }
     }
-    nc_worker_stop (&self);
+    nc_worker_term (&self);
 }

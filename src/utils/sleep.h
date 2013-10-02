@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Insollo Entertainment, LLC.  All rights reserved.
+    Copyright (c) 2012 250bpm s.r.o.  All rights reserved.
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"),
@@ -20,33 +20,11 @@
     IN THE SOFTWARE.
 */
 
-#ifndef NC_WORKER_H_INCLUDED
-#define NC_WORKER_H_INCLUDED
+#ifndef NN_SLEEP_INCLUDED
+#define NN_SLEEP_INCLUDED
 
-#include "state.h"
+/*  Platform independent implementation of sleeping. */
 
-enum nc_command_tag {
-    NC_CONFIGURE = 1,
-    NC_CLOSE = 2,
-    NC_SHUTDOWN = 99
-};
-
-struct nc_command_close {
-    int tag;
-    int socket;
-};
-
-struct nc_command_shutdown {
-    int tag;
-};
-
-struct nc_command_configure {
-    int tag;
-    int socket;
-    char url[];
-};
-
-void nc_worker_start(struct nc_state *state);
-void nc_worker_term(struct nc_state *state);
+void nn_sleep (int milliseconds);
 
 #endif

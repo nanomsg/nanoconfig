@@ -141,6 +141,7 @@ static struct nc_worker worker_struct;
 static void nc_list_add (struct nc_worker *self, struct nc_socket *sock)
 {
     sock->prev = self->socket_list.tail;
+    *sock->prev = sock;
     self->socket_list.tail = &sock->next;
     sock->next = NULL;
 }
@@ -201,7 +202,7 @@ static void nc_setup_pollfd (struct nc_worker *self)
         &self->request_rcvfd, &optlen);
     errno_assert (rc >= 0);
     nn_assert (self->request_rcvfd >= 0);
-    self->fds [NC_POLL_REQUEST_RCVFD].fd = self->cmd_rcvfd;
+    self->fds [NC_POLL_REQUEST_RCVFD].fd = self->request_rcvfd;
     self->fds [NC_POLL_REQUEST_RCVFD].events = POLLIN;
 
     if (self->updates_socket >= 0) {
@@ -223,7 +224,6 @@ static int nc_poll_exec (struct nc_worker *self, int timeout)
     if(self->updates_socket < 0) {
         num -= 1;
     }
-    timeout = 60000;
 
     /*  TODO(tailhook) insert ifdefs for windows' WSAPoll  */
     rc = poll (self->fds, num, timeout);
@@ -258,7 +258,7 @@ static void nc_process_configure (struct nc_worker *self,
     } else {
         optlen = sizeof(proto);
 
-        rc = nn_getsockopt (sock->socket_no,
+        rc = nn_getsockopt (cmd->socket,
             NN_SOL_SOCKET, NN_PROTOCOL, &proto, &optlen);
         errno_assert (rc >= 0);
         nn_assert (optlen == sizeof(int));
@@ -273,7 +273,7 @@ static void nc_process_configure (struct nc_worker *self,
         constlen = strlen(nconst);
 
         urllen = strlen(cmd->url);
-        reqlen = 4;  /*  Request id  */
+        reqlen = 8;  /*  Request id  */
         reqlen += strlen("RESOLVE ");
         reqlen += urllen;
         reqlen += 1;  /*  A space  */
@@ -283,9 +283,16 @@ static void nc_process_configure (struct nc_worker *self,
         sock->state = NC_STATE_STARTING;
         sock->socket_no = cmd->socket;
         /*  The request looks like:
-            REQUEST_ID(4 bytes) + "RESOLVE " + URL + " " + NN_SOCK_TYPE
-            */
-        target = sock->request + 4;  /*  Requestid is filled later  */
+            "\0\0\0\0" + REQUEST_ID(4 bytes) + "RESOLVE "+URL+" "+NN_SOCK_TYPE
+
+            The first 4 bytes are the fake channel id. It's stripped by xrep
+            socket and put to the header.
+
+            Since nn_recvmsg doesn't work well with ancillary data yet, we
+            don't receive the header, and need to read REQUEST ID from the
+            body.  */
+        memset (sock->request, 0, 8);
+        target = sock->request + 8;  /*  Requestid is filled later  */
         memcpy (target, "RESOLVE ", strlen("RESOLVE "));
         target += strlen("RESOLVE ");
         memcpy (target, cmd->url, urllen);
@@ -421,7 +428,8 @@ static int nc_parse_and_set_option (struct nc_worker *worker,
 }
 
 static int nc_parse_and_apply (struct nc_worker *worker,
-    struct nc_socket *self, char *buf, int buflen) {
+    struct nc_socket *self, char *buf, int buflen)
+{
     /*  Reply structure (JSON-like syntax)
      *  Error:
      *    [0,  # Error marker
@@ -459,8 +467,7 @@ static int nc_parse_and_apply (struct nc_worker *worker,
     int errstrlen;
     char *optname;
     int optnamelen;
-    int i;
-    int j;
+    int i, j, k;
     int rc;
     const char *symname;
     int symval;
@@ -483,10 +490,14 @@ static int nc_parse_and_apply (struct nc_worker *worker,
     struct nc_topic *tnode;
     struct nc_subscription *sub;
 
-    if (!nc_mp_parse_array (&buf, &buflen, &ralen))
+    if (!nc_mp_parse_array (&buf, &buflen, &ralen)) {
+        nc_report_error (worker, "Response is not an array", -1);
         return 0;
-    if (!nc_mp_parse_int (&buf, &buflen, &retcode))
+    }
+    if (!nc_mp_parse_int (&buf, &buflen, &retcode)) {
+        nc_report_error (worker, "First element is not an int", -1);
         return 0;
+    }
     if (retcode == 0) {
         /*  TODO(tailhook) report error somehow  */
         if (ralen < 3) {
@@ -514,7 +525,9 @@ static int nc_parse_and_apply (struct nc_worker *worker,
             return 0;
         }
         for (j = 0; ; ++j) {
-            symname = nn_symbol (i, &symval);
+            symname = nn_symbol (j, &symval);
+            if (!symname)
+                break;
             if (!strncmp(symname, optname, optnamelen) &&
                 symname [optnamelen] == 0)
             {
@@ -522,9 +535,9 @@ static int nc_parse_and_apply (struct nc_worker *worker,
                 break;
             }
         }
-        if (!*symname) {
+        if (!symname) {
             nc_report_error (worker, "Socket option not found", -1);
-            continue;
+            nn_assert (0);  // TOOD(tailhook)
         }
         /*  If prefixed by protocol name then it's protocol level, else it's
          *  NN_SOL_SOCKET level option  */
@@ -535,7 +548,7 @@ static int nc_parse_and_apply (struct nc_worker *worker,
         } else {
             optlev = NN_SOL_SOCKET;
         }
-        if (!nc_parse_and_set_option (worker, self->socket_no, optid, optlev,
+        if (!nc_parse_and_set_option (worker, self->socket_no, optlev, optid,
             &buf, &buflen))
             return 0;
     }
@@ -546,14 +559,16 @@ static int nc_parse_and_apply (struct nc_worker *worker,
     }
 
     for (i = 0; i < addressnum; ++i) {
-        if (!nc_mp_parse_array (&buf, &buflen, &tuplelen))
+        if (!nc_mp_parse_array (&buf, &buflen, &tuplelen)) {
+            nc_report_error (worker, "Address a tuple (array)", -1);
             return 0;
+        }
         if (tuplelen < 2 || tuplelen > 3) {
             nc_report_error (worker, "Address tuple has wrong length", -1);
             return 0;
         }
-        if (!nc_mp_parse_int (&buf, &buflen, &kind) ||
-            kind != 0 || kind != 1)
+        if (!nc_mp_parse_int (&buf, &buflen, &kind) || (
+            kind != 0 && kind != 1))
         {
             nc_report_error (worker, "Wrong address kind", -1);
             return 0;
@@ -570,7 +585,9 @@ static int nc_parse_and_apply (struct nc_worker *worker,
         translen = colonchar - addr;
 
         for (j = 0; ; ++j) {
-            symname = nn_symbol (i, &symval);
+            symname = nn_symbol (j, &symval);
+            if (!symname)
+                break;
             if (!strncmp (symname, "NN_", 3) &&
                 !strncasecmp (symname+3, addr, translen) &&
                 symname [translen+3] == 0)
@@ -581,9 +598,9 @@ static int nc_parse_and_apply (struct nc_worker *worker,
                 break;
             }
         }
-        if (!*symname) {
+        if (!symname) {
             nc_report_error (worker, "Transport not found", -1);
-            continue;
+            nn_assert (0);
         }
 
         if (tuplelen > 2) {
@@ -591,7 +608,7 @@ static int nc_parse_and_apply (struct nc_worker *worker,
                 nc_report_error (worker, "Options are not a mapping", -1);
                 return 0;
             }
-            for (i = 0; i < optpairs; ++i) {
+            for (j = 0; j < optpairs; ++j) {
                 if (!nc_mp_parse_string (&buf, &buflen,
                                          &optname, &optnamelen))
                 {
@@ -599,8 +616,10 @@ static int nc_parse_and_apply (struct nc_worker *worker,
                         "Socket option key is not a string", -1);
                     return 0;
                 }
-                for (j = 0; ; ++j) {
-                    symname = nn_symbol (i, &symval);
+                for (k = 0; ; ++k) {
+                    symname = nn_symbol (k, &symval);
+                    if (!symname)
+                        break;
                     if (!strncmp (symname, optname, optnamelen) &&
                         symname [optnamelen] == 0)
                     {
@@ -608,9 +627,9 @@ static int nc_parse_and_apply (struct nc_worker *worker,
                         break;
                     }
                 }
-                if (!*symname) {
+                if (!symname) {
                     nc_report_error (worker, "Socket option not found", -1);
-                    continue;
+                    nn_assert (0);
                 }
                 /*  If prefixed by transport name then it's transport level,
                  *  else it's NN_SOL_SOCKET level option  */
@@ -622,14 +641,14 @@ static int nc_parse_and_apply (struct nc_worker *worker,
                     optlev = NN_SOL_SOCKET;
                 }
                 if (!nc_parse_and_set_option (worker, self->socket_no,
-                    optid, optlev, &buf, &buflen))
+                    optlev, optid, &buf, &buflen))
                     return 0;
             }
         }
 
         addrbuf = nn_alloc (addrlen+1, "temporary_addr_buf");
         memcpy (addrbuf, addr, addrlen);
-        addrbuf [addrlen] = 1;
+        addrbuf [addrlen] = 0;
 
         if (kind == 0) {
             rc = nn_bind (self->socket_no, addrbuf);
@@ -637,7 +656,7 @@ static int nc_parse_and_apply (struct nc_worker *worker,
             rc = nn_connect (self->socket_no, addrbuf);
         }
         if (rc < 0)
-            nc_report_errno (worker, "Cant set address", errno);
+            nc_report_errno (worker, "Can't set address", errno);
         nn_free (addrbuf);
     }
 
@@ -686,9 +705,11 @@ static int nc_parse_and_apply (struct nc_worker *worker,
                     worker->topic_list.tail = &tnode->next;
                 }
                 sub->socket_list.next = NULL;
+                sub->socket_list.prev = self->subscr_list.tail;
                 *self->subscr_list.tail = sub;
                 self->subscr_list.tail = &sub->socket_list.next;
                 sub->topic_list.next = NULL;
+                sub->topic_list.prev = tnode->subscr_list.tail;
                 *tnode->subscr_list.tail = sub;
                 tnode->subscr_list.tail = &sub->topic_list.next;
             }
@@ -706,7 +727,10 @@ static void nc_process_responses (struct nc_worker *self) {
     struct nc_socket *item;
     uint32_t request_id;
 
-    while(1) {
+    buf = NULL;
+    while (1) {
+        if (buf)
+            nn_freemsg(buf);
         buflen = nn_recv (self->request_socket, &buf, NN_MSG, NN_DONTWAIT);
 
         if (buflen < 0) {
@@ -716,7 +740,7 @@ static void nc_process_responses (struct nc_worker *self) {
 
         if (buflen < 5)
             continue;  /*  Non-valid reply  */
-        request_id = *(uint32_t *)buf;
+        request_id = ntohl(*(uint32_t *)buf);
         if (!(request_id & 0x80000000u))
             continue;  /*  We're not endpoint for this message  */
         request_id &= ~0x80000000u;
@@ -725,7 +749,7 @@ static void nc_process_responses (struct nc_worker *self) {
                 if (item->state != NC_STATE_REQUEST_SENT)
                     break;  /*  Already has a reply or request reset  */
                 item->state = NC_STATE_SLEEPING;
-                if (nc_parse_and_apply (self, item, buf, buflen)) {
+                if (nc_parse_and_apply (self, item, buf+4, buflen-4)) {
                     item->retry_time = nn_clock_now (&self->clock) +
                         NC_REQUEST_AGAIN_TIME;
                 } else {
@@ -781,7 +805,7 @@ static uint64_t nc_process_timers (struct nc_worker *self) {
     next_timeout = now + 60000;
 
     for (item = self->socket_list.head; item; item = item->next) {
-        if (item->state != NC_STATE_STARTING && item->retry_time < now) {
+        if (item->state != NC_STATE_STARTING && item->retry_time <= now) {
             item->state = NC_STATE_STARTING;
         } else {
             next_timeout = min (next_timeout, item->retry_time);
@@ -791,8 +815,8 @@ static uint64_t nc_process_timers (struct nc_worker *self) {
             self->next_request_id += 1;
             if (self->next_request_id == 0x80000000u)
                 self->next_request_id = 0;
-            *(uint32_t *)item->request =
-                htonl(self->next_request_id) | 0x80000000u;
+            *(uint32_t *)(item->request+4) =
+                htonl(item->request_id | 0x80000000u);
             rc = nn_send (self->request_socket,
                 item->request, item->request_len,
                 NN_DONTWAIT);
@@ -817,7 +841,7 @@ static uint64_t nc_process_timers (struct nc_worker *self) {
     }
     now = nn_clock_now (&self->clock);
     if (next_timeout > now)
-        return now - next_timeout;
+        return next_timeout - now;
     return 0;
 }
 
@@ -879,6 +903,7 @@ void nc_worker_start (struct nc_state *state) {
     nn_clock_init (&self->clock);
     nn_random_generate (&self->next_request_id,
         sizeof (self->next_request_id));
+    self->next_request_id &= ~0x80000000u;
 
     nn_thread_init (&state->worker, nc_worker_loop, self);
 

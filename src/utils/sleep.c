@@ -1,5 +1,5 @@
 /*
-    Copyright (c) 2013 Insollo Entertainment, LLC.  All rights reserved.
+    Copyright (c) 2012 250bpm s.r.o.  All rights reserved.
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"),
@@ -20,33 +20,31 @@
     IN THE SOFTWARE.
 */
 
-#ifndef NC_WORKER_H_INCLUDED
-#define NC_WORKER_H_INCLUDED
+#include "sleep.h"
+#include "err.h"
 
-#include "state.h"
+#ifdef NN_HAVE_WINDOWS
 
-enum nc_command_tag {
-    NC_CONFIGURE = 1,
-    NC_CLOSE = 2,
-    NC_SHUTDOWN = 99
-};
+#include "win.h"
 
-struct nc_command_close {
-    int tag;
-    int socket;
-};
+void nn_sleep (int milliseconds)
+{
+    Sleep (milliseconds);
+}
 
-struct nc_command_shutdown {
-    int tag;
-};
+#else
 
-struct nc_command_configure {
-    int tag;
-    int socket;
-    char url[];
-};
+#include <time.h>
 
-void nc_worker_start(struct nc_state *state);
-void nc_worker_term(struct nc_state *state);
+void nn_sleep (int milliseconds)
+{
+    int rc;
+    struct timespec ts;
+
+    ts.tv_sec = milliseconds / 1000;
+    ts.tv_nsec = milliseconds % 1000 * 1000000;
+    rc = nanosleep (&ts, NULL);
+    errno_assert (rc == 0);    
+}
 
 #endif

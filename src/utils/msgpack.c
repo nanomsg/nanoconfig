@@ -31,12 +31,11 @@ int nc_mp_parse_int (char **pbuf, int *plen, int *result) {
 
     buf = *pbuf;
     len =  *plen;
+    if (len < 1)
+        return 0;
     marker = (unsigned char)*buf;
     buf += 1;
     len -= 1;
-
-    if (len < 1)
-        return 0;
 
     if ((marker & 0x80) == 0) {
         /*  Positive fixnum  */
@@ -106,6 +105,8 @@ int nc_mp_parse_string (char **pbuf, int *plen, char **result, int *reslen) {
 
     buf = *pbuf;
     len =  *plen;
+    if (len < 1)
+        return 0;
     marker = (unsigned char)*buf;
     buf += 1;
     len -= 1;
@@ -157,6 +158,8 @@ int nc_mp_parse_array (char **pbuf, int *plen, int *arrlen) {
 
     buf = *pbuf;
     len =  *plen;
+    if (len < 1)
+        return 0;
     marker = (unsigned char)*buf;
     buf += 1;
     len -= 1;
@@ -197,6 +200,8 @@ int nc_mp_parse_mapping (char **pbuf, int *plen, int *maplen) {
 
     buf = *pbuf;
     len =  *plen;
+    if (len < 1)
+        return 0;
     marker = (unsigned char)*buf;
     buf += 1;
     len -= 1;
