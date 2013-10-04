@@ -25,6 +25,7 @@
 
 #include <nanomsg/nn.h>
 #include <nanomsg/pipeline.h>
+#include <nanomsg/pubsub.h>
 
 #include "utils/thread.h"
 #include "utils/err.h"
@@ -101,6 +102,10 @@ struct nc_socket {
         struct nc_subscription *head;
         struct nc_subscription **tail;
     } subscr_list;
+    struct nc_endpoint_list {
+        struct nc_endpoint *head;
+        struct nc_endpoint **tail;
+    } endpoint_list;
 
     /*  A protocol name to use for socket option matching and in request  */
     int protocol_len;
@@ -109,6 +114,17 @@ struct nc_socket {
     /*  A buffer for name request  */
     int request_len;
     char request [];
+};
+
+struct nc_endpoint {
+    int eid;
+    int visited;
+
+    struct nc_endpoint **prev;
+    struct nc_endpoint *next;
+
+    int addr_len;
+    char addr[];
 };
 
 struct nc_worker {
@@ -149,7 +165,8 @@ static void nc_list_add (struct nc_worker *self, struct nc_socket *sock)
 static void nc_list_rm (struct nc_socket *sock)
 {
     *sock->prev = sock->next;
-    sock->next->prev  = sock->prev;
+    if (sock->next)
+        sock->next->prev  = sock->prev;
 }
 
 static struct nc_socket *nc_list_find (struct nc_worker *self, int num)
@@ -305,6 +322,8 @@ static void nc_process_configure (struct nc_worker *self,
         sock->protoid = proto;
         sock->subscr_list.head = NULL;
         sock->subscr_list.tail = &sock->subscr_list.head;
+        sock->endpoint_list.head = NULL;
+        sock->endpoint_list.tail = &sock->endpoint_list.head;
 
         nc_list_add (self, sock);
     }
@@ -483,12 +502,14 @@ static int nc_parse_and_apply (struct nc_worker *worker,
     int translen;
     int transid;
     const char *transpref;
-    char *addrbuf;
     int topicnum;
     char *topic;
     int topiclen;
     struct nc_topic *tnode;
     struct nc_subscription *sub;
+    struct nc_subscription *nsub;
+    struct nc_endpoint *ep;
+    struct nc_endpoint *nep;
 
     if (!nc_mp_parse_array (&buf, &buflen, &ralen)) {
         nc_report_error (worker, "Response is not an array", -1);
@@ -558,9 +579,13 @@ static int nc_parse_and_apply (struct nc_worker *worker,
         return 0;
     }
 
+    for (ep = self->endpoint_list.head; ep; ep=ep->next) {
+        ep->visited = 0;
+    }
+
     for (i = 0; i < addressnum; ++i) {
         if (!nc_mp_parse_array (&buf, &buflen, &tuplelen)) {
-            nc_report_error (worker, "Address a tuple (array)", -1);
+            nc_report_error (worker, "Address not a tuple (array)", -1);
             return 0;
         }
         if (tuplelen < 2 || tuplelen > 3) {
@@ -601,6 +626,12 @@ static int nc_parse_and_apply (struct nc_worker *worker,
         if (!symname) {
             nc_report_error (worker, "Transport not found", -1);
             nn_assert (0);
+        }
+
+        for (ep = self->endpoint_list.head; ep; ep = ep->next) {
+            if (ep->addr_len == addrlen
+                && !(memcmp (ep->addr, addr, addrlen)))
+                break;
         }
 
         if (tuplelen > 2) {
@@ -645,22 +676,52 @@ static int nc_parse_and_apply (struct nc_worker *worker,
                     return 0;
             }
         }
+        if (ep) {
+            ep->visited = 1;
+        } else {
+            ep = nn_alloc (sizeof(struct nc_endpoint) + addrlen + 1,
+                "nanoconfig_endpoint");
+            ep->visited = 1;
+            memcpy(ep->addr, addr, addrlen);
+            ep->addr[addrlen] = 0;
+            ep->addr_len = addrlen;
 
-        addrbuf = nn_alloc (addrlen+1, "temporary_addr_buf");
-        memcpy (addrbuf, addr, addrlen);
-        addrbuf [addrlen] = 0;
+            if (kind == 0) {
+                rc = nn_bind (self->socket_no, ep->addr);
+                printf("NN_BIND ``%s'' %d\n", ep->addr, rc);
+            } else if(kind == 1) {
+                rc = nn_connect (self->socket_no, ep->addr);
+                printf("NN_CONNECT ``%s'' %d\n", ep->addr, rc);
+            }
+            if (rc < 0)
+                nc_report_errno (worker, "Can't set address", errno);
 
-        if (kind == 0) {
-            rc = nn_bind (self->socket_no, addrbuf);
-        } else if(kind == 1) {
-            rc = nn_connect (self->socket_no, addrbuf);
+            ep->eid = rc;
+            ep->next = NULL;
+            ep->prev = self->endpoint_list.tail;
+            *self->endpoint_list.tail = ep;
+            self->endpoint_list.tail = &ep->next;
         }
-        if (rc < 0)
-            nc_report_errno (worker, "Can't set address", errno);
-        nn_free (addrbuf);
     }
 
-    for (sub = self->subscr_list.head; sub; ++sub) {
+    for (ep = self->endpoint_list.head; ep; ep = nep) {
+        nep = ep->next;
+        if (ep->visited)
+            continue;
+        nn_assert (ep->eid > 0);
+
+        rc = nn_shutdown (self->socket_no, ep->eid);
+        printf("NN_SHUTDOWN %d\n", ep->eid);
+        if (rc < 0)
+            nc_report_errno (worker, "Error shutting down endpoing", errno);
+
+        *ep->prev = ep->next;
+        if (ep->next)
+            ep->next->prev = ep->prev;
+        nn_free (ep);
+    }
+
+    for (sub = self->subscr_list.head; sub; sub = sub->socket_list.next) {
         sub->visited = 0;
     }
 
@@ -675,7 +736,8 @@ static int nc_parse_and_apply (struct nc_worker *worker,
                 return 0;
             }
 
-            for (sub = self->subscr_list.head; sub; ++sub) {
+            for (sub = self->subscr_list.head; sub;
+                 sub = sub->socket_list.next) {
                 if (sub->topic->topic_len == topiclen &&
                     !memcmp (sub->topic->topic, topic, topiclen)) {
                     sub->visited = 1;
@@ -685,6 +747,8 @@ static int nc_parse_and_apply (struct nc_worker *worker,
             if (!sub) {
                 sub = nn_alloc (sizeof (struct nc_subscription),
                                 "subscription");
+                sub->visited = 1;
+                sub->socket = self;
 
                 for (tnode = worker->topic_list.head; tnode;
                      tnode = tnode->next)
@@ -703,6 +767,15 @@ static int nc_parse_and_apply (struct nc_worker *worker,
                     *worker->topic_list.tail = tnode;
                     tnode->next = NULL;
                     worker->topic_list.tail = &tnode->next;
+                    if (worker->updates_socket) {
+                        rc = nn_setsockopt (worker->updates_socket,
+                            NN_SUB, NN_SUB_SUBSCRIBE,
+                            topic, topiclen);
+                        if (rc < 0) {
+                            nc_report_errno (worker, "Can't subscribe "
+                                "for updates", errno);
+                        }
+                    }
                 }
                 sub->socket_list.next = NULL;
                 sub->socket_list.prev = self->subscr_list.tail;
@@ -712,7 +785,40 @@ static int nc_parse_and_apply (struct nc_worker *worker,
                 sub->topic_list.prev = tnode->subscr_list.tail;
                 *tnode->subscr_list.tail = sub;
                 tnode->subscr_list.tail = &sub->topic_list.next;
+                sub->topic = tnode;
             }
+        }
+    }
+    for (sub = self->subscr_list.head; sub; sub = nsub) {
+        nsub = sub->socket_list.next;
+        if (sub->visited)
+            continue;
+
+        tnode = sub->topic;
+        *sub->topic_list.prev = sub->topic_list.next;
+        if (sub->topic_list.next)
+            sub->topic_list.next->topic_list.prev = sub->topic_list.prev;
+        *sub->socket_list.prev = sub->socket_list.next;
+        if (sub->socket_list.next)
+            sub->socket_list.next->socket_list.prev = sub->socket_list.prev;
+        nn_free (sub);
+
+        if (tnode->subscr_list.head == NULL)  {
+            *tnode->prev = tnode->next;
+            if (tnode->next)
+                tnode->next->prev = tnode->prev;
+
+            if (worker->updates_socket) {
+                rc = nn_setsockopt (worker->updates_socket,
+                    NN_SUB, NN_SUB_UNSUBSCRIBE,
+                    tnode->topic, tnode->topic_len);
+                if (rc < 0) {
+                    nc_report_errno (worker, "Can't subscribe "
+                        "for updates", errno);
+                }
+            }
+
+            nn_free (tnode);
         }
     }
 

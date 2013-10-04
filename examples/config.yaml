@@ -14,31 +14,39 @@ RESOLVE nanoconfig://hello NN_REQ:
     NN_SOCKET_NAME: "hello"
   # list of adresses
   - - - 0  # 0 -- bind, 1 -- connect
-      - "tcp://127.0.0.1:1234" # the addresss
+      - "tcp://127.0.0.1:1237" # the addresss
       # Socket options, optional
       - NN_SNDPRIO: 1
         NN_LINGER: 1000
         NN_TCP_NODELAY: 1
     # shorter form
     - [1, "ipc:///tmp/test", {NN_SNDPRIO: 2}]
+  # List of subscriptions for updates
+  # You can omit these subscriptions, but then in case you changed config
+  # the updates will be delivered in about 5 minutes unless you're lucky
+  - ["hello"]
 
 RESOLVE nanoconfig://hello NN_REP:
   - 1
   - {}  # empty options
   # endpoint options may be skipped at all
-  - - [1, "tcp://127.0.0.1:1234" ]
+  - - [1, "tcp://127.0.0.1:1237" ]
+  - ["hello"]
 
 RESOLVE nanoconfig://hello?fallback NN_REP:
   - 1
   - {}
   - - [0, "ipc:///tmp/test" ]
+  - ["hello", "fallbacks"]
 
 RESOLVE nanoconfig://bye NN_REQ:
   - 1
   - NN_SOCKET_NAME: "bye-req"
   - - [1, "tcp://127.0.0.1:1235"]
+  - ["bye"]
 
 RESOLVE nanoconfig://bye NN_REP:
   - 1
   - NN_SOCKET_NAME: "bye-rep"
   - - [0, "tcp://127.0.0.1:1235"]
+  - ["bye"]
