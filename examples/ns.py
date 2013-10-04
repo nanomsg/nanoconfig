@@ -1,3 +1,6 @@
+#
+#  This code is released into a public domain
+#
 from __future__ import print_function
 import yaml
 import json
