@@ -558,7 +558,12 @@ static int nc_parse_and_apply (struct nc_worker *worker,
         }
         if (!symname) {
             nc_report_error (worker, "Socket option not found", -1);
-            nn_assert (0);  // TOOD(tailhook)
+            if (!nc_mp_skip_value (&buf, &buflen)) {
+                nc_report_error (worker,
+                    "Failed to skip unknown socket option", -1);
+                return 0;
+            }
+            continue;
         }
         /*  If prefixed by protocol name then it's protocol level, else it's
          *  NN_SOL_SOCKET level option  */
@@ -625,7 +630,14 @@ static int nc_parse_and_apply (struct nc_worker *worker,
         }
         if (!symname) {
             nc_report_error (worker, "Transport not found", -1);
-            nn_assert (0);
+            for (j = 2; i < tuplelen; ++j) {
+                if (!nc_mp_skip_value (&buf, &buflen)) {
+                    nc_report_error (worker,
+                        "Failed to skip unknown transport", -1);
+                    return 0;
+                }
+            }
+            continue;
         }
 
         for (ep = self->endpoint_list.head; ep; ep = ep->next) {
@@ -660,7 +672,11 @@ static int nc_parse_and_apply (struct nc_worker *worker,
                 }
                 if (!symname) {
                     nc_report_error (worker, "Socket option not found", -1);
-                    nn_assert (0);
+                    if (!nc_mp_skip_value (&buf, &buflen)) {
+                        nc_report_error (worker,
+                            "Failed to skip unknown option", -1);
+                        return 0;
+                    }
                 }
                 /*  If prefixed by transport name then it's transport level,
                  *  else it's NN_SOL_SOCKET level option  */

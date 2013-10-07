@@ -234,3 +234,187 @@ int nc_mp_parse_mapping (char **pbuf, int *plen, int *maplen) {
     *plen = len;
     return 1;
 }
+
+int nc_mp_skip_value (char **pbuf, int *plen) {
+    char *buf;
+    int len;
+    unsigned char marker;
+    uint32_t maplen;
+    uint32_t arrlen;
+    uint32_t strlen;
+    uint32_t i;
+
+    buf = *pbuf;
+    len =  *plen;
+    if (len < 1)
+        return 0;
+    marker = (unsigned char)*buf;
+    buf += 1;
+    len -= 1;
+
+    if(marker < 0x80 || marker >= 0xE0) {  /*  fixint  */
+        /*  Marker byte is a value, do nothing  */
+    } else if (marker >= 0x80 && marker <= 0x8F) {  /*  fixmapping  */
+        maplen = marker & 0x0F;
+        for (i = 0; i < maplen; ++i) {
+            if (!nc_mp_skip_value (&buf, &len))  /*  key  */
+                return 0;
+            if (!nc_mp_skip_value (&buf, &len))  /*  value  */
+                return 0;
+        }
+    } else if (marker >= 0x90 && marker <= 0x9F) {  /*  fixarray  */
+        arrlen = marker & 0x0F;
+        for (i = 0; i < arrlen; ++i) {
+            if (!nc_mp_skip_value (&buf, &len))
+                return 0;
+        }
+    } else if (marker >= 0xA0 && marker <= 0xBF) {  /*  fixstr  */
+        strlen = marker & 0x1F;
+        if (len < (int)strlen)
+            return 0;
+        len -= strlen;
+        buf += strlen;
+    } else {
+        switch (marker) {
+        case 0xC0: break; /*  NIL  */
+        case 0xC2: break; /*  False  */
+        case 0xC3: break; /*  True  */
+        case 0xC7:  /*  ext 8  */
+            len -= 1;  /*  skip type byte  */
+            buf += 1;
+        case 0xC4:  /*  bin 8  */
+        case 0xD9:  /*  str 8  */
+            if(len < 1)
+                return 0;
+            strlen = (unsigned char)*buf;
+            len -= 1 + strlen;
+            buf += 1 + strlen;
+            break;
+        case 0xC8:  /*  ext 16  */
+            len -= 1;  /*  skip type byte  */
+            buf += 1;
+        case 0xC5:  /*  bin 16  */
+        case 0xDA:  /*  str 16  */
+            if(len < 2)
+                return 0;
+            strlen = be16toh(*(uint16_t*)buf);
+            len -= 2 + strlen;
+            buf += 2 + strlen;
+            break;
+        case 0xC9:  /*  ext 32  */
+            len -= 1;  /*  skip type byte  */
+            buf += 1;
+        case 0xC6:  /*  bin 32  */
+        case 0xDB:  /*  str 32  */
+            if(len < 4)
+                return 0;
+            strlen = be32toh(*(uint32_t*)buf);
+            len -= 4 + strlen;
+            buf += 4 + strlen;
+            break;
+        case 0xCA:  /*  float 32  */
+            len -= 4;
+            buf += 4;
+            break;
+        case 0xCB:  /*  float 64  */
+            len -= 8;
+            buf += 8;
+            break;
+        case 0xCC:  /*  uint 8  */
+        case 0xD0:  /*  int 8  */
+            len -= 1;
+            buf += 1;
+            break;
+        case 0xCD:  /*  uint 16  */
+        case 0xD1:  /*  int 16  */
+            len -= 2;
+            buf += 2;
+            break;
+        case 0xCE:  /*  uint 32  */
+        case 0xD2:  /*  int 32  */
+            len -= 4;
+            buf += 4;
+            break;
+        case 0xCF:  /*  uint 64  */
+        case 0xD3:  /*  int 64  */
+            len -= 8;
+            buf += 8;
+            break;
+        case 0xD4:  /*  fixext 1  */
+            len -= 2;
+            buf += 2;
+            break;
+        case 0xD5:  /*  fixext 2  */
+            len -= 3;
+            buf += 3;
+            break;
+        case 0xD6:  /*  fixext 4  */
+            len -= 5;
+            buf += 5;
+            break;
+        case 0xD7:  /*  fixext 8  */
+            len -= 9;
+            buf += 9;
+            break;
+        case 0xD8:  /*  fixext 16  */
+            len -= 17;
+            buf += 17;
+            break;
+        case 0xDC:  /*  array 16  */
+            if (len < 2)
+                return 0;
+            arrlen = be16toh(*(uint16_t*)buf);
+            len -= 2;
+            buf += 2;
+            for (i = 0; i < arrlen; ++i) {
+                if (!nc_mp_skip_value (&buf, &len))
+                    return 0;
+            }
+            break;
+        case 0xDD:  /*  array 32  */
+            if (len < 4)
+                return 0;
+            arrlen = be32toh(*(uint16_t*)buf);
+            len -= 4;
+            buf += 4;
+            for (i = 0; i < arrlen; ++i) {
+                if (!nc_mp_skip_value (&buf, &len))
+                    return 0;
+            }
+            break;
+        case 0xDE:  /*  map 16  */
+            if (len < 2)
+                return 0;
+            maplen = be16toh(*(uint16_t*)buf);
+            len -= 2;
+            buf += 2;
+            for (i = 0; i < maplen; ++i) {
+                if (!nc_mp_skip_value (&buf, &len))  /*  key  */
+                    return 0;
+                if (!nc_mp_skip_value (&buf, &len))  /*  value  */
+                    return 0;
+            }
+            break;
+        case 0xDF:  /*  map 32  */
+            if (len < 4)
+                return 0;
+            maplen = be32toh(*(uint16_t*)buf);
+            len -= 4;
+            buf += 4;
+            for (i = 0; i < maplen; ++i) {
+                if (!nc_mp_skip_value (&buf, &len))  /*  key  */
+                    return 0;
+                if (!nc_mp_skip_value (&buf, &len))  /*  value  */
+                    return 0;
+            }
+            break;
+        default:
+            return 0;
+        }
+    }
+    if (len < 0)
+        return 0;
+    *pbuf = buf;
+    *plen = len;
+    return 1;
+}

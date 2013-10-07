@@ -25,3 +25,4 @@ int nc_mp_parse_int (char **pbuf, int *plen, int *result);
 int nc_mp_parse_string (char **pbuf, int *plen, char **result, int *reslen);
 int nc_mp_parse_array (char **pbuf, int *plen, int *arrlen);
 int nc_mp_parse_mapping (char **pbuf, int *plen, int *maplen);
+int nc_mp_skip_value (char **pbuf, int *plen);
