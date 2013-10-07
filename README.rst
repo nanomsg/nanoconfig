@@ -38,7 +38,7 @@ For example, if you have ``your_app`` binary application::
     NN_CONFIG_SERVICE=ipc:///var/run/name_service.sock your_app
 
 To have system-wide configuration service you might want to
-add ``/etc/profile.d/nanoconfig.sh`` with the following contents:
+add ``/etc/profile.d/nanoconfig.sh`` with the following contents::
 
     NN_CONFIG_SERVICE=ipc:///var/run/name_service.sock
     export NN_CONFIG_SERVICE
