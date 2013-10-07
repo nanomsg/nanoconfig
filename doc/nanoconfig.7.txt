@@ -1,0 +1,37 @@
+nanoconfig(7)
+=============
+
+
+NAME
+----
+nanoconfig - configuration service support for nanomsg
+
+
+SYNOPSIS
+--------
+*cc* ['flags'] 'files' *-lnanomsg* *-lnanoconfig* ['libraries']
+
+
+DESCRIPTION
+-----------
+
+Following functions are exported by nanoconfig library:
+
+Enable socket to be managed by nanoconfig::
+    linknanoconfig:nc_configure[3]
+
+Close an SP socket (replaced *nn_close*)::
+    linknanoconfig:nc_close[3]
+
+Following tools are installed with the library:
+
+nccat::
+    linknanoconfig:nccat[1]
+
+ncdev::
+    linknanoconfig:ncdev[1]
+
+AUTHORS
+-------
+Paul Colomiets <paul@colomiets.name>
+

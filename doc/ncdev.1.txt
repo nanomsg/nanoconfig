@@ -1,0 +1,120 @@
+nccat(1)
+==========
+
+NAME
+----
+ncdev - a command-line interface to linknanomsg:nn_device[3] with
+nanoconfig support
+
+
+SYNOPSIS
+--------
+
+    ncdev --protocol PROTO [-vqh] {--topology|-T} TOPOLOGY
+    ncdev {--reqrep|--pubsub|--pipeline|--bus|--pair} {--topology|-T} TOPOLOGY
+
+
+DESCRIPTION
+-----------
+
+The ncdev is a tiny wrapper around linknanomsg:nn_device[3] providing
+command-line interface for the utility.
+
+
+OPTIONS
+-------
+
+Generic:
+
+ *--verbose,-v*::
+    Increase verbosity of the nanocat
+ *--silent,-q*::
+    Decrease verbosity of the nanocat
+ *--help,-h*::
+    This help text
+
+Socket Types:
+
+ *--push*::
+    Use NN_PUSH socket type
+ *--pull*::
+    Use NN_PULL socket type
+ *--pub*::
+    Use NN_PUB socket type
+ *--sub*::
+    Use NN_SUB socket type
+ *--req*::
+    Use NN_REQ socket type
+ *--rep*::
+    Use NN_REP socket type
+ *--surveyor*::
+    Use NN_SURVEYOR socket type
+ *--respondent*::
+    Use NN_RESPONDENT socket type
+ *--bus*::
+    Use NN_BUS socket type
+ *--pair*::
+    Use NN_PAIR socket type
+
+Topology options:
+
+ *--topology* 'NAME'::
+    Join topology by url "nanoconfig://NAME"
+
+SUB Socket Options:
+
+ *--subscribe* 'PREFIX'::
+    Subscribe to the prefix PREFIX. Note: socket will be
+    subscribed to everything (empty prefix) if no prefixes
+    are specified on the command-line.
+
+Input Options:
+
+ *--format* 'FORMAT'::
+    Use echo format FORMAT (same as the options below)
+ *--raw*::
+    Dump message as is (Note: no delimiters are printed)
+ *--ascii,-A*::
+    Print ASCII part of message delimited by newline. All
+                        non-ascii characters replaced by dot.
+ *--quoted,-Q*::
+    Print each message on separate line in double quotes
+    with C-like character escaping
+ *--msgpack*::
+    Print each message as msgpacked string (raw type). This
+    is useful for programmatic parsing.
+
+Output Options:
+
+ *--interval,-i* 'SEC'::
+    Send message (or request) every SEC seconds
+ *--delay,-d* 'SEC'::
+    Wait for SEC seconds before sending message (useful for one-shot
+    PUB sockets)
+ *--data,-D* 'DATA'::
+    Send DATA to the socket and quit for PUB, PUSH, PAIR,
+    BUS socket. Use DATA to reply for REP or  RESPONDENT
+    socket. Send DATA as request for REQ or SURVEYOR socket.
+ *--file,-F* 'PATH'::
+    Same as --data but get data from file PATH
+
+
+EXAMPLES
+--------
+
+The request-reply device (proxy):
+
+    nccat --repreq --topology pingpong
+
+Note: all socket options are configured with nanoconfig
+
+
+SEE ALSO
+--------
+linknanomsg:nanoconfig[7]
+linknanomsg:nanomsg[7]
+
+AUTHORS
+-------
+
+Paul Colomiets <paul@colomiets.name>

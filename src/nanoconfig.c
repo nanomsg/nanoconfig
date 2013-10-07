@@ -126,7 +126,7 @@ static void nc_start() {
     self.initialized = 1;
 }
 
-int nc_validate_url (char *url) {
+int nc_validate_url (const char *url) {
     if (strlen (url) > NC_URL_MAX)
         return 0;
     if (strncmp (url, "nanoconfig://", 13))
@@ -139,7 +139,7 @@ int nc_validate_url (char *url) {
     return 1;
 }
 
-int nc_configure (int sock, char *url) {
+int nc_configure (int sock, const char *url) {
     int rc;
     struct nc_command_configure *cmd;
     int cmdlen;

@@ -29,8 +29,9 @@ extern "C" {
 
 #define NC_URL_MAX (4000)
 
-int nc_configure(int sock, char *address);
-int nc_close(int sock);
+int nc_configure(int sock, const char *address);
+void nc_close(int sock);
+void nc_term();
 
 #ifdef __cplusplus
 }

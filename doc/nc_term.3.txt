@@ -1,0 +1,38 @@
+nc_term(3)
+===========
+
+NAME
+----
+nc_term - free nanoconfig resources
+
+
+SYNOPSIS
+--------
+*#include <nanomsg/config.h>*
+
+*void nc_term (int 's');*
+
+
+DESCRIPTION
+-----------
+Frees nanoconfig resources, and shuts down worker thread. Must be called
+before linknanomsg:nn_term[3].
+
+
+NOTES
+-----
+
+nn_term() is synchronous, it waits for worker socket to be shut down.
+
+
+SEE ALSO
+--------
+linknanoconfig:nc_configure[7]
+linknanomsg:nn_socket[3]
+linknanomsg:nanoconfig[7]
+linknanomsg:nanomsg[7]
+
+AUTHORS
+-------
+Paul Colomiets <paul@colomiets.name>
+

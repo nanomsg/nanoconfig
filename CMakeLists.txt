@@ -3,6 +3,8 @@ cmake_minimum_required (VERSION 2.6)
 project (nanoconfig)
 find_package (Threads)
 
+add_subdirectory (doc)
+
 add_library (nanoconfig SHARED
     src/nanoconfig.c
     src/worker.c

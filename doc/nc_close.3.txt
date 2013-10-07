@@ -1,0 +1,52 @@
+nc_close(3)
+===========
+
+NAME
+----
+nc_close - close an SP socket, that being managed by linknanoconfig:nanoconfig[7]
+
+
+SYNOPSIS
+--------
+*#include <nanomsg/config.h>*
+
+*void nc_close (int 's');*
+
+
+DESCRIPTION
+-----------
+Frees nanoconfig resources that is allocated by linknanoconfig:nc_configure[3],
+then call linknanomsg:nn_close[3]. Note resource deallocation is asychronous.
+The only way to ensure that socket is closed is to call
+linknanoconfig:nc_term[3].
+
+
+EXAMPLE
+-------
+
+----
+int s = nn_socket (AF_SP, NN_PUB);
+assert (s >= 0);
+int rc = nc_configure (s, "nanoconfig://test");
+assert (rc >= 0);
+nc_close (s);
+----
+
+
+NOTES
+-----
+
+It's safe to call *nc_close* on sockets that's not *nc_configure*d.
+
+
+SEE ALSO
+--------
+linknanoconfig:nc_configure[7]
+linknanomsg:nn_socket[3]
+linknanomsg:nanoconfig[7]
+linknanomsg:nanomsg[7]
+
+AUTHORS
+-------
+Paul Colomiets <paul@colomiets.name>
+

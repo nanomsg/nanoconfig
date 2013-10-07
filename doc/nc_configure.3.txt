@@ -1,0 +1,51 @@
+nc_configure(3)
+===============
+
+NAME
+----
+nc_configure - set's topology name that given nanomsg socket will join
+
+
+SYNOPSIS
+--------
+*#include <nanomsg/config.h>*
+
+*int nc_configure (int 's', const char '*addr');*
+
+
+DESCRIPTION
+-----------
+
+Configures nanomsg socket to join the topology named *addr*. The address must
+be an URL, with "nanoconfig://" scheme.
+
+
+EXAMPLE
+-------
+
+----
+int s = nn_socket (AF_SP, NN_PUB);
+assert (s >= 0);
+int rc = nc_configure (s, "nanoconfig://test");
+assert (rc >= 0);
+----
+
+
+NOTES
+-----
+
+After using *nc_configure* the socket must be closed with *nc_close* instead
+of *nn_close*.
+
+
+SEE ALSO
+--------
+linknanoconfig:nc_close[7]
+linknanomsg:nn_socket[3]
+linknanomsg:nanoconfig[7]
+linknanomsg:nanomsg[7]
+
+AUTHORS
+-------
+Paul Colomiets <paul@colomiets.name>
+

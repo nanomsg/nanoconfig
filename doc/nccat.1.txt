@@ -1,0 +1,151 @@
+nccat(1)
+==========
+
+NAME
+----
+nccat - a command-line interface to linknanomsg:nanomsg[7], with linknanoconfig:nanoconfig[7] support
+
+
+SYNOPSIS
+--------
+
+    nanocat --req --topology TOPOLOGY {--data DATA|--file PATH} [-i SEC] [-AQ]
+    nanocat --rep --topology TOPOLOGY {--data DATA|--file PATH} [-AQ]
+    nanocat --push --topology TOPOLOGY {--data DATA|--file PATH} [-i SEC]
+    nanocat --pull --topology TOPOLOGY [-AQ]
+    nanocat --pub --topology TOPOLOGY {--data DATA|--file PATH} [-i SEC]
+    nanocat --sub --topology TOPOLOGY [--subscribe PREFIX ...] [-AQ]
+    nanocat --surveyor --topology TOPOLOGY {--data DATA|--file PATH} [-i SEC] [-AQ]
+    nanocat --respondent --topology TOPOLOGY {--data DATA|--file PATH} [-AQ]
+    nanocat --bus --topology TOPOLOGY {--data DATA|--file PATH} [-i SEC] [-AQ]
+    nanocat --pair --topology TOPOLOGY {--data DATA|--file PATH} [-i SEC] [-AQ]
+
+
+DESCRIPTION
+-----------
+
+The nccat is a command-line tool to send and receive data via nanomsg
+sockets. It can be used for debugging purposes, sending files through the
+network, health checking the system or whatever else you can think of.
+
+This is direct copy of linknanomsg:nanocat[1] utility included within *nanomsg* with
+added *nanoconfig* support
+
+
+OPTIONS
+-------
+
+Generic:
+
+ *--verbose,-v*::
+    Increase verbosity of the nanocat
+ *--silent,-q*::
+    Decrease verbosity of the nanocat
+ *--help,-h*::
+    This help text
+
+Socket Types:
+
+ *--push*::
+    Use NN_PUSH socket type
+ *--pull*::
+    Use NN_PULL socket type
+ *--pub*::
+    Use NN_PUB socket type
+ *--sub*::
+    Use NN_SUB socket type
+ *--req*::
+    Use NN_REQ socket type
+ *--rep*::
+    Use NN_REP socket type
+ *--surveyor*::
+    Use NN_SURVEYOR socket type
+ *--respondent*::
+    Use NN_RESPONDENT socket type
+ *--bus*::
+    Use NN_BUS socket type
+ *--pair*::
+    Use NN_PAIR socket type
+
+Topology options:
+
+ *--topology* 'NAME'::
+    Join topology by url "nanoconfig://NAME"
+
+SUB Socket Options:
+
+ *--subscribe* 'PREFIX'::
+    Subscribe to the prefix PREFIX. Note: socket will be
+    subscribed to everything (empty prefix) if no prefixes
+    are specified on the command-line.
+
+Input Options:
+
+ *--format* 'FORMAT'::
+    Use echo format FORMAT (same as the options below)
+ *--raw*::
+    Dump message as is (Note: no delimiters are printed)
+ *--ascii,-A*::
+    Print ASCII part of message delimited by newline. All
+                        non-ascii characters replaced by dot.
+ *--quoted,-Q*::
+    Print each message on separate line in double quotes
+    with C-like character escaping
+ *--msgpack*::
+    Print each message as msgpacked string (raw type). This
+    is useful for programmatic parsing.
+
+Output Options:
+
+ *--interval,-i* 'SEC'::
+    Send message (or request) every SEC seconds
+ *--delay,-d* 'SEC'::
+    Wait for SEC seconds before sending message (useful for one-shot
+    PUB sockets)
+ *--data,-D* 'DATA'::
+    Send DATA to the socket and quit for PUB, PUSH, PAIR,
+    BUS socket. Use DATA to reply for REP or  RESPONDENT
+    socket. Send DATA as request for REQ or SURVEYOR socket.
+ *--file,-F* 'PATH'::
+    Same as --data but get data from file PATH
+
+
+EXAMPLES
+--------
+
+The ping-pong with nn_req/nn_rep sockets (must be run simultaneously):
+
+    nccat --rep --topology pingpong --data pong --format ascii
+    nccat --req --topology pingpong --data ping --format ascii
+
+Or in shorter to write form:
+
+    nccat --rep -Tpingpong -Dpong -A
+    nccat --req -Tpingpong -Dping -A
+
+Do periodic requests once a second:
+
+    nccat --req -l1234 -Dping -A -i 1
+
+The rep socket that never reply (no -D option), may be used to check if
+resending the requests is actually work:
+
+    nccat --rep -Ttest
+
+Send an output of the ls to whatever would connect to 127.0.0.1:1234 then exit:
+
+    ls | nccat --push -Tls -F-
+
+Send heartbeats to imaginary monitoring service:
+
+    nccat --pub -Tmonitoring -D"I am alive!" --interval 10
+
+
+SEE ALSO
+--------
+linknanomsg:nanomsg[7]
+
+AUTHORS
+-------
+
+Paul Colomiets <paul@colomiets.name>
