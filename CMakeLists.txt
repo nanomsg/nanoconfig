@@ -3,7 +3,7 @@ cmake_minimum_required (VERSION 2.6)
 project (nanoconfig)
 find_package (Threads)
 
-add_library (nanoconfig
+add_library (nanoconfig SHARED
     src/nanoconfig.c
     src/worker.c
     src/utils/random.c
@@ -24,3 +24,10 @@ add_executable (ncdev
     tools/nanodev.c
     tools/options.c)
 target_link_libraries (ncdev nanoconfig)
+
+install (TARGETS nanoconfig nccat ncdev
+    RUNTIME DESTINATION bin
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib)
+install (FILES src/config.h
+    DESTINATION include/nn)
