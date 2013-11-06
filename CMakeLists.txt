@@ -1,6 +1,6 @@
 cmake_minimum_required (VERSION 2.6)
 
-project (nanoconfig)
+project (nanoconfig C)
 find_package (Threads)
 
 add_subdirectory (doc)
