@@ -8,9 +8,9 @@ nc_term - free nanoconfig resources
 
 SYNOPSIS
 --------
-*#include <nanomsg/config.h>*
+*#include <nanomsg/nanoconfig.h>*
 
-*void nc_term (int 's');*
+*void nc_term ();*
 
 
 DESCRIPTION
