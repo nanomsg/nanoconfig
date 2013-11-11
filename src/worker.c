@@ -383,7 +383,7 @@ static void nc_process_commands (struct nc_worker *self)
             }
             errno_assert (rc >= 0);
         }
-        nn_assert (rc > (int) sizeof (int));
+        nn_assert (rc >= (int) sizeof (int));
         tag = *(int *)buf;
 
         switch (tag)
