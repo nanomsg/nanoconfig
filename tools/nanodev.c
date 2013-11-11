@@ -28,7 +28,7 @@
 #include <nanomsg/survey.h>
 #include <nanomsg/reqrep.h>
 
-#include "../src/config.h"
+#include "../src/nanoconfig.h"
 #include "options.h"
 #include "../src/utils/sleep.c"
 #include "../src/utils/clock.c"

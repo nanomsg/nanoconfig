@@ -31,5 +31,5 @@ install (TARGETS nanoconfig nccat ncdev
     RUNTIME DESTINATION bin
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib)
-install (FILES src/config.h
-    DESTINATION include/nn)
+install (FILES src/nanoconfig.h
+    DESTINATION include/nanomsg)

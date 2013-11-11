@@ -8,7 +8,7 @@ nc_close - close an SP socket, that being managed by linknanoconfig:nanoconfig[7
 
 SYNOPSIS
 --------
-*#include <nanomsg/config.h>*
+*#include <nanomsg/nanoconfig.h>*
 
 *void nc_close (int 's');*
 

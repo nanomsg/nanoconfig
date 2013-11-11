@@ -8,7 +8,7 @@ nc_configure - set's topology name that given nanomsg socket will join
 
 SYNOPSIS
 --------
-*#include <nanomsg/config.h>*
+*#include <nanomsg/nanoconfig.h>*
 
 *int nc_configure (int 's', const char '*addr');*
 
