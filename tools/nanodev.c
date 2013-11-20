@@ -184,7 +184,7 @@ static int nn_create_socket1 (nn_options_t *options)
 		break;
 	}
 
-    sock = nn_socket (AF_SP, sock_type);
+    sock = nn_socket (AF_SP_RAW, sock_type);
     nn_assert_errno (sock >= 0, "Can't create socket");
 
     return sock;
@@ -215,7 +215,7 @@ static int nn_create_socket2 (nn_options_t *options)
         return -1;
 	}
 
-    sock = nn_socket (AF_SP, sock_type);
+    sock = nn_socket (AF_SP_RAW, sock_type);
     nn_assert_errno (sock >= 0, "Can't create socket");
 
     return sock;
