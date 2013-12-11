@@ -21,7 +21,13 @@
 */
 
 #define _BSD_SOURCE
+#if defined(__APPLE__)
+#include <libkern/OSByteOrder.h>
+#define be16toh(x) OSSwapBigToHostInt16(x)
+#define be32toh(x) OSSwapBigToHostInt32(x)
+#else
 #include <endian.h>
+#endif
 #include "int.h"
 
 int nc_mp_parse_int (char **pbuf, int *plen, int *result) {
